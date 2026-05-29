@@ -169,6 +169,39 @@ When configuring your OIDC provider, you will need to provide a callback URL (al
 
 Replace `https://your.wygiwyh.domain` with the actual URL where your WYGIWYH instance is accessible. And `<OIDC_CLIENT_NAME>` with the slugfied value set in OIDC_CLIENT_NAME or the default `openid-connect` if you haven't set this variable.
 
+### API Bearer JWT
+
+WYGIWYH can also accept Bearer access tokens for API requests. This is useful when your UI login already uses Keycloak/OIDC and you want non-interactive API clients, such as MCP, to call `/api/` without adding a local password.
+
+Set the following environment variables to enable it:
+
+| Variable | Description |
+|---|---|
+| `API_OIDC_JWT_ENABLED` | Enables API Bearer token authentication. Defaults to `false`. |
+| `API_OIDC_AUDIENCE` | Expected `aud` claim for API Bearer tokens. Defaults to `OIDC_CLIENT_ID`. |
+| `API_OIDC_DISCOVERY_URL` | Optional explicit OpenID discovery URL. Defaults to `<API_OIDC_ISSUER>/.well-known/openid-configuration`. |
+| `API_OIDC_ISSUER` | Expected issuer for the Bearer token. Defaults to `OIDC_SERVER_URL`. |
+| `API_OIDC_EMAIL_CLAIM` | Claim used to map the Bearer token to a WYGIWYH user. Defaults to `email`. |
+| `API_OIDC_REQUIRE_VERIFIED_EMAIL` | Reject tokens with `email_verified=false`. Defaults to `true`. |
+
+For this MVP, API Bearer authentication maps the token to an existing WYGIWYH user by email. The user still needs to exist in WYGIWYH already, usually because they have logged in via OIDC before.
+
+### MCP OAuth Application Bootstrap
+
+If you want WYGIWYH to act as the OAuth authorization server for a remote MCP server, you can let the container create or update the OAuth application automatically on startup.
+
+Set these environment variables:
+
+| Variable | Description |
+|---|---|
+| `MCP_OAUTH_CLIENT_NAME` | Optional display name for the OAuth client. Defaults to `WYGIWYH MCP`. |
+| `MCP_OAUTH_CLIENT_ID` | Client ID that will be created or updated in `django-oauth-toolkit`. |
+| `MCP_OAUTH_CLIENT_SECRET` | Client secret for that OAuth application. |
+| `MCP_OAUTH_REDIRECT_URIS` | Space-separated redirect URIs allowed for the MCP OAuth client. |
+| `MCP_OAUTH_SKIP_AUTHORIZATION` | Set to `true` to bypass the consent screen. Defaults to `false`. |
+
+When these variables are present, startup runs `python manage.py setup_oauth` after migrations and keeps the OAuth application in sync without needing a manual Django admin step.
+
 # How it works
 
 Check out our [Wiki](https://github.com/eitchtee/WYGIWYH/wiki) for more information.

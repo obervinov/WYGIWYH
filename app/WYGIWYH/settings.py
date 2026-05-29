@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     "cachalot",
     "rest_framework",
     "drf_spectacular",
+    "oauth2_provider",
     "django_cotton",
     "apps.rules.apps.RulesConfig",
     "apps.calendar_view.apps.CalendarViewConfig",
@@ -317,6 +318,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_REDIRECT_URL = "/"
 LOGIN_URL = "/login/"
 LOGOUT_REDIRECT_URL = "/login/"
+PUBLIC_BASE_URL = os.getenv("URL", "").split(" ")[0].rstrip("/")
 
 # Allauth settings
 AUTHENTICATION_BACKENDS = [
@@ -352,6 +354,19 @@ SOCIALACCOUNT_ONLY = True
 SOCIALACCOUNT_AUTO_SIGNUP = os.getenv("OIDC_ALLOW_SIGNUP", "true").lower() == "true"
 ACCOUNT_ADAPTER = "allauth.account.adapter.DefaultAccountAdapter"
 SOCIALACCOUNT_ADAPTER = "allauth.socialaccount.adapter.DefaultSocialAccountAdapter"
+
+API_OIDC_JWT_ENABLED = os.getenv("API_OIDC_JWT_ENABLED", "false").lower() == "true"
+API_OIDC_ISSUER = os.getenv("API_OIDC_ISSUER", os.getenv("OIDC_SERVER_URL", "")).rstrip(
+    "/"
+)
+API_OIDC_DISCOVERY_URL = os.getenv("API_OIDC_DISCOVERY_URL", "")
+if not API_OIDC_DISCOVERY_URL and API_OIDC_ISSUER:
+    API_OIDC_DISCOVERY_URL = f"{API_OIDC_ISSUER}/.well-known/openid-configuration"
+API_OIDC_AUDIENCE = os.getenv("API_OIDC_AUDIENCE", os.getenv("OIDC_CLIENT_ID", ""))
+API_OIDC_EMAIL_CLAIM = os.getenv("API_OIDC_EMAIL_CLAIM", "email")
+API_OIDC_REQUIRE_VERIFIED_EMAIL = (
+    os.getenv("API_OIDC_REQUIRE_VERIFIED_EMAIL", "true").lower() == "true"
+)
 
 # CRISPY FORMS
 CRISPY_ALLOWED_TEMPLATE_PACKS = ["bootstrap5", "crispy_forms/pure_text"]
@@ -405,9 +420,25 @@ REST_FRAMEWORK = {
         "apps.api.permissions.NotInDemoMode",
         "rest_framework.permissions.DjangoModelPermissions",
     ],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "oauth2_provider.contrib.rest_framework.OAuth2Authentication",
+        "apps.api.authentication.OIDCJWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.BasicAuthentication",
+    ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 10,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+OAUTH2_PROVIDER = {
+    "PKCE_REQUIRED": True,
+    "ACCESS_TOKEN_EXPIRE_SECONDS": int(
+        os.getenv("OAUTH2_ACCESS_TOKEN_EXPIRE_SECONDS", "3600")
+    ),
+    "SCOPES": {
+        "mcp": "Access WYGIWYH from MCP clients.",
+    },
 }
 
 SPECTACULAR_SETTINGS = {

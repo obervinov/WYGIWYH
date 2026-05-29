@@ -14,5 +14,6 @@ python manage.py migrate
 touch /tmp/migrations_complete
 
 python manage.py setup_users
+python manage.py setup_oauth
 
 exec gunicorn WYGIWYH.wsgi:application --bind 0.0.0.0:8000 --timeout 600
