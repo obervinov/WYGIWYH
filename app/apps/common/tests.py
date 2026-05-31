@@ -1,4 +1,5 @@
 import os
+import json
 from unittest.mock import patch
 
 from django.contrib.auth.hashers import check_password
@@ -13,6 +14,7 @@ Application = get_application_model()
 
 @override_settings(
     PUBLIC_BASE_URL="https://wygiwyh.example.com",
+    SECRET_KEY="test-secret-key",
     OAUTH2_PROVIDER={"SCOPES": {"mcp": "Access WYGIWYH from MCP clients."}},
 )
 class AuthorizationServerMetadataTests(SimpleTestCase):
@@ -25,7 +27,103 @@ class AuthorizationServerMetadataTests(SimpleTestCase):
             response.json()["authorization_endpoint"],
             "https://wygiwyh.example.com/oauth/authorize/",
         )
+        self.assertEqual(
+            response.json()["registration_endpoint"],
+            "https://wygiwyh.example.com/oauth/register/",
+        )
         self.assertEqual(response.json()["scopes_supported"], ["mcp"])
+        self.assertIn("none", response.json()["token_endpoint_auth_methods_supported"])
+
+
+@override_settings(
+    PUBLIC_BASE_URL="https://wygiwyh.example.com",
+    SECRET_KEY="test-secret-key",
+    OAUTH2_PROVIDER={"SCOPES": {"mcp": "Access WYGIWYH from MCP clients."}},
+)
+class DynamicClientRegistrationTests(TestCase):
+    def test_registers_public_client_for_pkce_flow(self):
+        response = self.client.post(
+            reverse("oauth-dynamic-client-registration"),
+            data=json.dumps(
+                {
+                    "client_name": "Copilot MCP",
+                    "redirect_uris": ["http://127.0.0.1:8765/callback"],
+                    "grant_types": ["authorization_code", "refresh_token"],
+                    "response_types": ["code"],
+                    "scope": "mcp",
+                    "token_endpoint_auth_method": "none",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(payload["client_name"], "Copilot MCP")
+        self.assertEqual(
+            payload["redirect_uris"],
+            ["http://127.0.0.1:8765/callback"],
+        )
+        self.assertEqual(
+            payload["grant_types"],
+            ["authorization_code", "refresh_token"],
+        )
+        self.assertEqual(payload["response_types"], ["code"])
+        self.assertEqual(payload["scope"], "mcp")
+        self.assertEqual(payload["token_endpoint_auth_method"], "none")
+        self.assertNotIn("client_secret", payload)
+
+        application = Application.objects.get(client_id=payload["client_id"])
+        self.assertEqual(application.name, "Copilot MCP")
+        self.assertEqual(application.client_type, Application.CLIENT_PUBLIC)
+        self.assertEqual(
+            application.authorization_grant_type,
+            Application.GRANT_AUTHORIZATION_CODE,
+        )
+        self.assertEqual(
+            application.redirect_uris,
+            "http://127.0.0.1:8765/callback",
+        )
+
+    def test_registers_confidential_client_with_generated_secret(self):
+        response = self.client.post(
+            reverse("oauth-dynamic-client-registration"),
+            data=json.dumps(
+                {
+                    "client_name": "Confidential MCP",
+                    "redirect_uris": ["http://127.0.0.1:8765/callback"],
+                    "token_endpoint_auth_method": "client_secret_basic",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(payload["token_endpoint_auth_method"], "client_secret_basic")
+        self.assertEqual(payload["scope"], "mcp")
+        self.assertEqual(payload["client_secret_expires_at"], 0)
+        self.assertTrue(payload["client_secret"])
+
+        application = Application.objects.get(client_id=payload["client_id"])
+        self.assertEqual(application.client_type, Application.CLIENT_CONFIDENTIAL)
+        self.assertTrue(check_password(payload["client_secret"], application.client_secret))
+
+    def test_rejects_unsupported_token_auth_method(self):
+        response = self.client.post(
+            reverse("oauth-dynamic-client-registration"),
+            data=json.dumps(
+                {
+                    "redirect_uris": ["http://127.0.0.1:8765/callback"],
+                    "token_endpoint_auth_method": "private_key_jwt",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "invalid_client_metadata")
+        self.assertIn("token_endpoint_auth_method", response.json()["error_description"])
 
 
 class SetupOAuthCommandTests(TestCase):
