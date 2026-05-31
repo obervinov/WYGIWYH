@@ -1,5 +1,8 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
+
+from apps.common.models import APIToken
 
 
 @admin.action(description=_("Make public"))
@@ -10,6 +13,11 @@ def make_public(modeladmin, request, queryset):
 @admin.action(description=_("Make private"))
 def make_private(modeladmin, request, queryset):
     queryset.update(visibility="private")
+
+
+@admin.action(description=_("Revoke selected API tokens"))
+def revoke_api_tokens(modeladmin, request, queryset):
+    queryset.update(revoked_at=timezone.now())
 
 
 class SharedObjectModelAdmin(admin.ModelAdmin):
@@ -24,3 +32,31 @@ class SharedObjectModelAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         # Use the all_objects manager to show all transactions, including deleted ones
         return self.model.all_objects.all()
+
+
+@admin.register(APIToken)
+class APITokenAdmin(admin.ModelAdmin):
+    actions = [revoke_api_tokens]
+    list_display = (
+        "name",
+        "user",
+        "token_key",
+        "created_at",
+        "last_used_at",
+        "expires_at",
+        "revoked_at",
+    )
+    search_fields = ("name", "user__email", "token_key")
+    readonly_fields = (
+        "user",
+        "name",
+        "token_key",
+        "created_at",
+        "updated_at",
+        "last_used_at",
+        "expires_at",
+        "revoked_at",
+    )
+
+    def has_add_permission(self, request):
+        return False

@@ -1,10 +1,13 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.contrib.auth import get_user_model
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 from rest_framework.exceptions import AuthenticationFailed
 
-from apps.api.authentication import OIDCJWTAuthentication
+from apps.api.authentication import APITokenAuthentication, OIDCJWTAuthentication
+from apps.common.models import APIToken
 
 
 @override_settings(
@@ -95,3 +98,43 @@ class OIDCJWTAuthenticationTests(SimpleTestCase):
             )
             with self.assertRaises(AuthenticationFailed):
                 self.authentication.authenticate(request)
+
+
+class APITokenAuthenticationTests(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.authentication = APITokenAuthentication()
+        self.user = get_user_model().objects.create_user(
+            email="automation@example.com",
+            password="test-password",
+        )
+
+    def test_returns_none_without_token_header(self):
+        request = self.factory.get("/api/accounts/")
+        self.assertIsNone(self.authentication.authenticate(request))
+
+    def test_authenticates_valid_api_token(self):
+        token, raw_token = APIToken.objects.create_token(user=self.user, name="n8n")
+        request = self.factory.get(
+            "/api/accounts/",
+            HTTP_AUTHORIZATION=f"Token {raw_token}",
+        )
+
+        authenticated_user, authenticated_token = self.authentication.authenticate(request)
+
+        self.assertEqual(authenticated_user, self.user)
+        self.assertEqual(authenticated_token.pk, token.pk)
+        token.refresh_from_db()
+        self.assertIsNotNone(token.last_used_at)
+
+    def test_rejects_expired_api_token(self):
+        token, raw_token = APIToken.objects.create_token(user=self.user, name="n8n")
+        token.expires_at = timezone.now() - timezone.timedelta(minutes=1)
+        token.save(update_fields=["expires_at"])
+        request = self.factory.get(
+            "/api/accounts/",
+            HTTP_AUTHORIZATION=f"Token {raw_token}",
+        )
+
+        with self.assertRaisesRegex(AuthenticationFailed, "expired"):
+            self.authentication.authenticate(request)

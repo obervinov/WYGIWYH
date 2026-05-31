@@ -4,8 +4,11 @@ import jwt
 import requests
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.authentication import BaseAuthentication, get_authorization_header
 from rest_framework.exceptions import AuthenticationFailed
+
+from apps.common.models import APIToken
 
 
 @lru_cache(maxsize=4)
@@ -90,6 +93,42 @@ class OIDCJWTAuthentication(BaseAuthentication):
         if not user.is_active:
             raise AuthenticationFailed("User account is disabled.")
         return user
+
+    def authenticate_header(self, request):
+        return self.keyword
+
+
+class APITokenAuthentication(BaseAuthentication):
+    keyword = "Token"
+
+    def authenticate(self, request):
+        auth = get_authorization_header(request).split()
+        if not auth or auth[0].lower() != self.keyword.lower().encode():
+            return None
+
+        if len(auth) != 2:
+            raise AuthenticationFailed("Invalid API token header.")
+
+        raw_token = auth[1].decode("utf-8")
+
+        try:
+            token_key, token_secret = APIToken.parse_raw_token(raw_token)
+        except ValueError as exc:
+            raise AuthenticationFailed("Invalid API token.") from exc
+
+        token = APIToken.objects.select_related("user").filter(token_key=token_key).first()
+        if token is None or not token.check_secret(token_secret):
+            raise AuthenticationFailed("Invalid API token.")
+        if token.revoked_at is not None:
+            raise AuthenticationFailed("API token has been revoked.")
+        if token.is_expired():
+            raise AuthenticationFailed("API token has expired.")
+        if not token.user.is_active:
+            raise AuthenticationFailed("User account is disabled.")
+
+        token.last_used_at = timezone.now()
+        token.save(update_fields=["last_used_at"])
+        return (token.user, token)
 
     def authenticate_header(self, request):
         return self.keyword

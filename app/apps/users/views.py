@@ -8,12 +8,15 @@ from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse
 from django.shortcuts import redirect, render, get_object_or_404
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
 
 from apps.common.decorators.htmx import only_htmx
+from apps.common.models import APIToken
 from apps.common.decorators.user import is_superuser, htmx_login_required
 from apps.users.forms import (
+    APITokenCreateForm,
     LoginForm,
     UserSettingsForm,
     UserUpdateForm,
@@ -113,7 +116,56 @@ def update_settings(request):
     else:
         form = UserSettingsForm(instance=user_settings)
 
-    return render(request, "users/fragments/user_settings.html", {"form": form})
+    return render(
+        request,
+        "users/fragments/user_settings.html",
+        {
+            "form": form,
+            "api_token_form": APITokenCreateForm(),
+            "api_tokens": request.user.api_tokens.all(),
+        },
+    )
+
+
+def _render_api_tokens(request, *, form=None, raw_token=None):
+    return render(
+        request,
+        "users/fragments/api_tokens.html",
+        {
+            "api_token_form": form or APITokenCreateForm(),
+            "api_tokens": request.user.api_tokens.all(),
+            "raw_token": raw_token,
+        },
+    )
+
+
+@only_htmx
+@htmx_login_required
+@require_http_methods(["POST"])
+def api_token_add(request):
+    form = APITokenCreateForm(request.POST)
+    if form.is_valid():
+        _token, raw_token = form.save(user=request.user)
+        messages.success(request, _("API token created successfully"))
+        return _render_api_tokens(
+            request,
+            form=APITokenCreateForm(),
+            raw_token=raw_token,
+        )
+
+    return _render_api_tokens(request, form=form)
+
+
+@only_htmx
+@htmx_login_required
+@require_http_methods(["DELETE"])
+def api_token_revoke(request, token_id):
+    token = get_object_or_404(APIToken, id=token_id, user=request.user)
+    if token.revoked_at is None:
+        token.revoked_at = timezone.now()
+        token.save(update_fields=["revoked_at"])
+    messages.success(request, _("API token revoked successfully"))
+    return _render_api_tokens(request)
 
 
 @htmx_login_required
