@@ -215,6 +215,8 @@ Set these environment variables:
 
 When these variables are present, startup runs `python manage.py setup_oauth` after migrations and keeps the OAuth application in sync without needing a manual Django admin step.
 
+WYGIWYH also exposes OAuth Dynamic Client Registration at `/.well-known/oauth-authorization-server` via `registration_endpoint`, so MCP clients that support RFC 7591 can self-register instead of relying on a pre-created `MCP_OAUTH_CLIENT_ID` / `MCP_OAUTH_CLIENT_SECRET`. The current implementation supports `authorization_code` + PKCE clients using `none`, `client_secret_basic`, or `client_secret_post` token endpoint auth methods.
+
 # How it works
 
 Check out our [Wiki](https://github.com/eitchtee/WYGIWYH/wiki) for more information.
