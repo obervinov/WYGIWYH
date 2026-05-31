@@ -1,13 +1,17 @@
 import os
 import json
+from io import StringIO
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.utils import timezone
 from django.urls import reverse
 from oauth2_provider.models import get_application_model
 
+from apps.common.models import APIToken
 
 Application = get_application_model()
 
@@ -185,3 +189,42 @@ class SetupOAuthCommandTests(TestCase):
         )
         self.assertTrue(application.skip_authorization)
         self.assertTrue(check_password("new-secret", application.client_secret))
+
+
+class CreateAPITokenCommandTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            email="n8n@example.com",
+            password="test-password",
+        )
+
+    def test_creates_hashed_api_token_and_prints_raw_value(self):
+        stdout = StringIO()
+
+        call_command(
+            "create_api_token",
+            self.user.email,
+            "--name",
+            "n8n sync",
+            stdout=stdout,
+        )
+
+        token = APIToken.objects.get(user=self.user, name="n8n sync")
+        lines = [line.strip() for line in stdout.getvalue().splitlines() if line.strip()]
+        raw_token = lines[-1]
+
+        self.assertTrue(raw_token.startswith(APIToken.TOKEN_PREFIX))
+        self.assertNotEqual(token.token_hash, raw_token)
+        self.assertTrue(token.check_secret(APIToken.parse_raw_token(raw_token)[1]))
+
+    def test_supports_expiring_tokens(self):
+        call_command(
+            "create_api_token",
+            self.user.email,
+            "--expires-in-days",
+            "7",
+        )
+
+        token = APIToken.objects.get(user=self.user)
+        self.assertIsNotNone(token.expires_at)
+        self.assertGreater(token.expires_at, timezone.now())

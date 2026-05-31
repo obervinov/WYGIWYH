@@ -199,6 +199,31 @@ Set the following environment variables to enable it:
 
 For this MVP, API Bearer authentication maps the token to an existing WYGIWYH user by email. The user still needs to exist in WYGIWYH already, usually because they have logged in via OIDC before.
 
+### API Tokens for n8n and other automations
+
+If you need a stable non-browser credential for automations such as `n8n`, WYGIWYH can also issue its own user-bound API tokens. This avoids Keycloak login flows and can be used directly against `/api/`.
+
+Create a token from the container or application shell:
+
+```bash
+python manage.py create_api_token you@example.com --name n8n
+```
+
+Optional expiration:
+
+```bash
+python manage.py create_api_token you@example.com --name n8n --expires-in-days 90
+```
+
+The command prints the raw token **once**. Store it in your secret manager and use it like this:
+
+```bash
+curl -H "Authorization: Token wygiwyh_pat_<key>.<secret>" \
+  https://your.wygiwyh.domain/api/accounts/
+```
+
+Recommended usage for automation is a dedicated WYGIWYH user such as `n8n@...`, so API ownership and audit trails stay separate from your interactive account.
+
 ### MCP OAuth Application Bootstrap
 
 If you want WYGIWYH to act as the OAuth authorization server for a remote MCP server, you can let the container create or update the OAuth application automatically on startup.
