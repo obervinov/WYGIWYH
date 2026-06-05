@@ -1,16 +1,9 @@
 import logging
-from datetime import timedelta
 
 from django.db.models import QuerySet
 from django.utils import timezone
 
-from apps.currencies.exchange_rates.providers import (
-    SynthFinanceProvider,
-    SynthFinanceStockProvider,
-    CoinGeckoFreeProvider,
-    CoinGeckoProProvider,
-    TransitiveRateProvider,
-)
+import apps.currencies.exchange_rates.providers as providers
 from apps.currencies.models import ExchangeRateService, ExchangeRate, Currency
 
 logger = logging.getLogger(__name__)
@@ -18,11 +11,12 @@ logger = logging.getLogger(__name__)
 
 # Map service types to provider classes
 PROVIDER_MAPPING = {
-    "synth_finance": SynthFinanceProvider,
-    "synth_finance_stock": SynthFinanceStockProvider,
-    "coingecko_free": CoinGeckoFreeProvider,
-    "coingecko_pro": CoinGeckoProProvider,
-    "transitive": TransitiveRateProvider,
+    "coingecko_free": providers.CoinGeckoFreeProvider,
+    "coingecko_pro": providers.CoinGeckoProProvider,
+    "transitive": providers.TransitiveRateProvider,
+    "frankfurter": providers.FrankfurterProvider,
+    "twelvedata": providers.TwelveDataProvider,
+    "twelvedatamarkets": providers.TwelveDataMarketsProvider,
 }
 
 
@@ -203,25 +197,70 @@ class ExchangeRateFetcher:
 
                 if provider.rates_inverted:
                     # If rates are inverted, we need to swap currencies
-                    ExchangeRate.objects.create(
-                        from_currency=to_currency,
-                        to_currency=from_currency,
-                        rate=rate,
-                        date=timezone.now(),
-                    )
+                    if service.singleton:
+                        # Try to get the last automatically created exchange rate
+                        exchange_rate = (
+                            ExchangeRate.objects.filter(
+                                automatic=True,
+                                from_currency=to_currency,
+                                to_currency=from_currency,
+                            )
+                            .order_by("-date")
+                            .first()
+                        )
+                    else:
+                        exchange_rate = None
+
+                    if not exchange_rate:
+                        ExchangeRate.objects.create(
+                            automatic=True,
+                            from_currency=to_currency,
+                            to_currency=from_currency,
+                            rate=rate,
+                            date=timezone.now(),
+                        )
+                    else:
+                        exchange_rate.rate = rate
+                        exchange_rate.date = timezone.now()
+                        exchange_rate.save()
+
                     processed_pairs.add((to_currency.id, from_currency.id))
                 else:
                     # If rates are not inverted, we can use them as is
-                    ExchangeRate.objects.create(
-                        from_currency=from_currency,
-                        to_currency=to_currency,
-                        rate=rate,
-                        date=timezone.now(),
-                    )
+                    if service.singleton:
+                        # Try to get the last automatically created exchange rate
+                        exchange_rate = (
+                            ExchangeRate.objects.filter(
+                                automatic=True,
+                                from_currency=from_currency,
+                                to_currency=to_currency,
+                            )
+                            .order_by("-date")
+                            .first()
+                        )
+                    else:
+                        exchange_rate = None
+
+                    if not exchange_rate:
+                        ExchangeRate.objects.create(
+                            automatic=True,
+                            from_currency=from_currency,
+                            to_currency=to_currency,
+                            rate=rate,
+                            date=timezone.now(),
+                        )
+                    else:
+                        exchange_rate.rate = rate
+                        exchange_rate.date = timezone.now()
+                        exchange_rate.save()
+
                     processed_pairs.add((from_currency.id, to_currency.id))
 
             service.last_fetch = timezone.now()
+            service.failure_count = 0
             service.save()
 
         except Exception as e:
             logger.error(f"Error fetching rates for {service.name}: {e}")
+            service.failure_count += 1
+            service.save()

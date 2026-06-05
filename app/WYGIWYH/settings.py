@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -46,7 +47,7 @@ INSTALLED_APPS = [
     "django.contrib.sites",
     "whitenoise.runserver_nostatic",
     "django.contrib.staticfiles",
-    "webpack_boilerplate",
+    "django_vite",
     "django.contrib.humanize",
     "django.contrib.postgres",
     "django_browser_reload",
@@ -69,6 +70,7 @@ INSTALLED_APPS = [
     "apps.api.apps.ApiConfig",
     "cachalot",
     "rest_framework",
+    "rest_framework.authtoken",
     "drf_spectacular",
     "oauth2_provider",
     "django_cotton",
@@ -129,11 +131,22 @@ STORAGES = {
 
 WHITENOISE_MANIFEST_STRICT = False
 
+
+def immutable_file_test(path, url):
+    # Match vite (rollup)-generated hashes, à la, `some_file-CSliV9zW.js`
+    return re.match(r"^.+[.-][0-9a-zA-Z_-]{8,12}\..+$", url)
+
+
+WHITENOISE_IMMUTABLE_FILE_TEST = immutable_file_test
+
 WSGI_APPLICATION = "WYGIWYH.wsgi.application"
 
 
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
+
+THREADS = int(os.getenv("GUNICORN_THREADS", 1))
+MAX_POOL_SIZE = THREADS + 1
 
 DATABASES = {
     "default": {
@@ -143,6 +156,17 @@ DATABASES = {
         "PASSWORD": os.getenv("SQL_PASSWORD", "password"),
         "HOST": os.getenv("SQL_HOST", "localhost"),
         "PORT": os.getenv("SQL_PORT", "5432"),
+        "CONN_MAX_AGE": 0,
+        "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {
+            "pool": {
+                "min_size": 1,
+                "max_size": MAX_POOL_SIZE,
+                "timeout": 10,
+                "max_lifetime": 600,
+                "max_idle": 300,
+            },
+        },
     }
 }
 
@@ -290,7 +314,7 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "static_files"
 
 STATICFILES_DIRS = [
-    ROOT_DIR / "frontend/build",
+    ROOT_DIR / "frontend" / "build",
     BASE_DIR / "static",
 ]
 
@@ -306,9 +330,11 @@ CACHES = {
     }
 }
 
-WEBPACK_LOADER = {
-    "MANIFEST_FILE": ROOT_DIR / "frontend/build/manifest.json",
-}
+DJANGO_VITE_ASSETS_PATH = STATIC_ROOT
+DJANGO_VITE_MANIFEST_PATH = DJANGO_VITE_ASSETS_PATH / "manifest.json"
+DJANGO_VITE_DEV_MODE = os.getenv("DJANGO_VITE_DEV_MODE", "false").lower() == "true"
+DJANGO_VITE_DEV_SERVER_PORT = int(os.getenv("DJANGO_VITE_DEV_SERVER_PORT", "5173"))
+DJANGO_VITE_DEV_SERVER_HOST = os.getenv("DJANGO_VITE_DEV_SERVER_HOST", "localhost")
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -352,8 +378,10 @@ ACCOUNT_EMAIL_VERIFICATION = "none"
 SOCIALACCOUNT_LOGIN_ON_GET = True
 SOCIALACCOUNT_ONLY = True
 SOCIALACCOUNT_AUTO_SIGNUP = os.getenv("OIDC_ALLOW_SIGNUP", "true").lower() == "true"
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
 ACCOUNT_ADAPTER = "allauth.account.adapter.DefaultAccountAdapter"
-SOCIALACCOUNT_ADAPTER = "allauth.socialaccount.adapter.DefaultSocialAccountAdapter"
+SOCIALACCOUNT_ADAPTER = "apps.users.adapters.AutoConnectSocialAccountAdapter"
 
 API_OIDC_JWT_ENABLED = os.getenv("API_OIDC_JWT_ENABLED", "false").lower() == "true"
 API_OIDC_ISSUER = os.getenv("API_OIDC_ISSUER", os.getenv("OIDC_SERVER_URL", "")).rstrip(
@@ -369,12 +397,19 @@ API_OIDC_REQUIRE_VERIFIED_EMAIL = (
 )
 
 # CRISPY FORMS
-CRISPY_ALLOWED_TEMPLATE_PACKS = ["bootstrap5", "crispy_forms/pure_text"]
-CRISPY_TEMPLATE_PACK = "bootstrap5"
+CRISPY_ALLOWED_TEMPLATE_PACKS = [
+    "crispy_forms/pure_text",
+    "crispy-daisyui",
+]
+CRISPY_TEMPLATE_PACK = "crispy-daisyui"
 
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_COOKIE_AGE = int(os.getenv("SESSION_EXPIRY_TIME", 2678400))  # 31 days
 SESSION_COOKIE_SECURE = os.getenv("HTTPS_ENABLED", "false").lower() == "true"
+
+HTTPS_ENABLED = os.getenv("HTTPS_ENABLED", "false").lower() == "true"
+ACCOUNT_DEFAULT_HTTP_PROTOCOL = "https" if HTTPS_ENABLED else "http"
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https") if HTTPS_ENABLED else None
 
 DEBUG_TOOLBAR_CONFIG = {
     "ROOT_TAG_EXTRA_ATTRS": "hx-preserve",
@@ -394,7 +429,7 @@ DEBUG_TOOLBAR_PANELS = [
     "debug_toolbar.panels.signals.SignalsPanel",
     "debug_toolbar.panels.redirects.RedirectsPanel",
     "debug_toolbar.panels.profiling.ProfilingPanel",
-    "cachalot.panels.CachalotPanel",
+    # "cachalot.panels.CachalotPanel",
 ]
 INTERNAL_IPS = [
     "127.0.0.1",
@@ -420,14 +455,18 @@ REST_FRAMEWORK = {
         "apps.api.permissions.NotInDemoMode",
         "rest_framework.permissions.DjangoModelPermissions",
     ],
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.OrderingFilter",
+    ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "oauth2_provider.contrib.rest_framework.OAuth2Authentication",
         "apps.api.authentication.OIDCJWTAuthentication",
+        "rest_framework.authentication.TokenAuthentication",
         "rest_framework.authentication.SessionAuthentication",
         "rest_framework.authentication.BasicAuthentication",
     ],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
-    "PAGE_SIZE": 10,
+    "DEFAULT_PAGINATION_CLASS": "apps.api.custom.pagination.CustomPageNumberPagination",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
@@ -452,7 +491,7 @@ SPECTACULAR_SETTINGS = {
 if "procrastinate" in sys.argv:
     LOGGING = {
         "version": 1,
-        "disable_existing_loggers": False,
+        "disable_existing_loggers": True,
         "formatters": {
             "standard": {
                 "format": "[%(asctime)s] - %(levelname)s - %(name)s - %(message)s",
@@ -460,26 +499,19 @@ if "procrastinate" in sys.argv:
             },
         },
         "handlers": {
-            "procrastinate": {
-                "level": "INFO",
-                "class": "logging.StreamHandler",
-                "formatter": "standard",
-            },
             "console": {
                 "class": "logging.StreamHandler",
                 "formatter": "standard",
                 "level": "INFO",
             },
         },
+        "root": {
+            "handlers": ["console"],
+            "level": "INFO",
+        },
         "loggers": {
             "procrastinate": {
-                "handlers": ["procrastinate"],
-                "propagate": False,
-            },
-            "root": {
-                "handlers": ["console"],
                 "level": "INFO",
-                "propagate": False,
             },
         },
     }
@@ -499,19 +531,20 @@ else:
                 "formatter": "standard",
                 "level": "INFO",
             },
-            "procrastinate": {
-                "level": "INFO",
-                "class": "logging.StreamHandler",
-            },
+        },
+        "root": {
+            "handlers": ["console"],
+            "level": "INFO",
         },
         "loggers": {
             "procrastinate": {
-                "handlers": None,
+                "handlers": [],
                 "propagate": False,
             },
-            "root": {
+            "allauth": {
                 "handlers": ["console"],
-                "level": "INFO",
+                "level": "DEBUG",
+                "propagate": False,
             },
         },
     }
@@ -568,6 +601,7 @@ PWA_APP_SCREENSHOTS = [
 PWA_SERVICE_WORKER_PATH = BASE_DIR / "templates" / "pwa" / "serviceworker.js"
 
 ENABLE_SOFT_DELETE = os.getenv("ENABLE_SOFT_DELETE", "false").lower() == "true"
+CHECK_FOR_UPDATES = os.getenv("CHECK_FOR_UPDATES", "true").lower() == "true"
 KEEP_DELETED_TRANSACTIONS_FOR = int(os.getenv("KEEP_DELETED_ENTRIES_FOR", "365"))
 APP_VERSION = os.getenv("APP_VERSION", "unknown")
 DEMO = os.getenv("DEMO", "false").lower() == "true"

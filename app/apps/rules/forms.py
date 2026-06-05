@@ -1,15 +1,21 @@
-from crispy_bootstrap5.bootstrap5 import Switch, BS5Accordion
-from crispy_forms.bootstrap import FormActions, AccordionGroup
+from crispy_forms.bootstrap import Alert
+from apps.common.fields.forms.dynamic_select import DynamicModelChoiceField
+from apps.common.widgets.crispy.daisyui import Switch
+from apps.common.widgets.crispy.submit import NoClassSubmit
+from apps.common.widgets.tom_select import TomSelect, TransactionSelect
+from apps.rules.models import (
+    TransactionRule,
+    TransactionRuleAction,
+    UpdateOrCreateTransactionRuleAction,
+)
+from apps.transactions.forms import BulkEditTransactionForm
+from apps.transactions.models import Transaction
+from crispy_forms.bootstrap import AccordionGroup, FormActions, Accordion
 from crispy_forms.helper import FormHelper
-from crispy_forms.layout import Layout, Field, Row, Column
+from crispy_forms.layout import HTML, Column, Field, Layout, Row
 from django import forms
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
-
-from apps.common.widgets.crispy.submit import NoClassSubmit
-from apps.common.widgets.tom_select import TomSelect
-from apps.rules.models import TransactionRule, UpdateOrCreateTransactionRuleAction
-from apps.rules.models import TransactionRuleAction
 
 
 class TransactionRuleForm(forms.ModelForm):
@@ -31,7 +37,6 @@ class TransactionRuleForm(forms.ModelForm):
         self.helper = FormHelper()
         self.helper.form_tag = False
         self.helper.form_method = "post"
-        # TO-DO: Add helper with available commands
         self.helper.layout = Layout(
             Switch("active"),
             "name",
@@ -40,24 +45,25 @@ class TransactionRuleForm(forms.ModelForm):
                 Column(Switch("on_create")),
                 Column(Switch("on_delete")),
             ),
+            "order",
+            Switch("sequenced"),
             "description",
             "trigger",
+            Alert(
+                _("You can add actions to this rule in the next screen."), dismiss=False
+            ),
         )
 
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -65,10 +71,11 @@ class TransactionRuleForm(forms.ModelForm):
 class TransactionRuleActionForm(forms.ModelForm):
     class Meta:
         model = TransactionRuleAction
-        fields = ("value", "field")
+        fields = ("value", "field", "order")
         labels = {
             "field": _("Set field"),
             "value": _("To"),
+            "order": _("Order"),
         }
         widgets = {"field": TomSelect(clear_button=False)}
 
@@ -82,6 +89,7 @@ class TransactionRuleActionForm(forms.ModelForm):
         self.helper.form_method = "post"
         # TO-DO: Add helper with available commands
         self.helper.layout = Layout(
+            "order",
             "field",
             "value",
         )
@@ -89,17 +97,13 @@ class TransactionRuleActionForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -147,9 +151,11 @@ class UpdateOrCreateTransactionRuleActionForm(forms.ModelForm):
             "search_category_operator": TomSelect(clear_button=False),
             "search_internal_note_operator": TomSelect(clear_button=False),
             "search_internal_id_operator": TomSelect(clear_button=False),
+            "search_mute_operator": TomSelect(clear_button=False),
         }
 
         labels = {
+            "order": _("Order"),
             "search_account_operator": _("Operator"),
             "search_type_operator": _("Operator"),
             "search_is_paid_operator": _("Operator"),
@@ -163,6 +169,7 @@ class UpdateOrCreateTransactionRuleActionForm(forms.ModelForm):
             "search_internal_id_operator": _("Operator"),
             "search_tags_operator": _("Operator"),
             "search_entities_operator": _("Operator"),
+            "search_mute_operator": _("Operator"),
             "search_account": _("Account"),
             "search_type": _("Type"),
             "search_is_paid": _("Paid"),
@@ -176,6 +183,7 @@ class UpdateOrCreateTransactionRuleActionForm(forms.ModelForm):
             "search_internal_id": _("Internal ID"),
             "search_tags": _("Tags"),
             "search_entities": _("Entities"),
+            "search_mute": _("Mute"),
             "set_account": _("Account"),
             "set_type": _("Type"),
             "set_is_paid": _("Paid"),
@@ -189,6 +197,7 @@ class UpdateOrCreateTransactionRuleActionForm(forms.ModelForm):
             "set_category": _("Category"),
             "set_internal_note": _("Internal Note"),
             "set_internal_id": _("Internal ID"),
+            "set_mute": _("Mute"),
         }
 
     def __init__(self, *args, **kwargs):
@@ -200,138 +209,149 @@ class UpdateOrCreateTransactionRuleActionForm(forms.ModelForm):
         self.helper.form_method = "post"
 
         self.helper.layout = Layout(
-            BS5Accordion(
+            "order",
+            Accordion(
                 AccordionGroup(
                     _("Search Criteria"),
                     Field("filter", rows=1),
                     Row(
                         Column(
                             Field("search_type_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_type", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_is_paid_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_is_paid", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
+                        ),
+                    ),
+                    Row(
+                        Column(
+                            Field("search_mute_operator"),
+                            css_class="col-span-12 md:col-span-4",
+                        ),
+                        Column(
+                            Field("search_mute", rows=1),
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_account_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_account", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_entities_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_entities", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_date_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_date", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_reference_date_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_reference_date", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_description_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_description", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_amount_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_amount", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_category_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_category", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_tags_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_tags", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_notes_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_notes", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_internal_note_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_internal_note", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     Row(
                         Column(
                             Field("search_internal_id_operator"),
-                            css_class="form-group col-md-4",
+                            css_class="col-span-12 md:col-span-4",
                         ),
                         Column(
                             Field("search_internal_id", rows=1),
-                            css_class="form-group col-md-8",
+                            css_class="col-span-12 md:col-span-8",
                         ),
                     ),
                     active=True,
@@ -340,6 +360,7 @@ class UpdateOrCreateTransactionRuleActionForm(forms.ModelForm):
                     _("Set Values"),
                     Field("set_type", rows=1),
                     Field("set_is_paid", rows=1),
+                    Field("set_mute", rows=1),
                     Field("set_account", rows=1),
                     Field("set_entities", rows=1),
                     Field("set_date", rows=1),
@@ -361,17 +382,13 @@ class UpdateOrCreateTransactionRuleActionForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -381,3 +398,106 @@ class UpdateOrCreateTransactionRuleActionForm(forms.ModelForm):
         if commit:
             instance.save()
         return instance
+
+
+class DryRunCreatedTransacion(forms.Form):
+    transaction = DynamicModelChoiceField(
+        model=Transaction,
+        to_field_name="id",
+        label=_("Transaction"),
+        required=True,
+        queryset=Transaction.objects.none(),
+        widget=TransactionSelect(clear_button=False, income=True, expense=True),
+        help_text=_("Type to search for a transaction"),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.layout = Layout(
+            "transaction",
+            FormActions(
+                NoClassSubmit("submit", _("Test"), css_class="btn btn-primary"),
+            ),
+        )
+
+        if self.data.get("transaction"):
+            try:
+                transaction = Transaction.objects.get(id=self.data.get("transaction"))
+            except Transaction.DoesNotExist:
+                transaction = None
+
+            if transaction:
+                self.fields["transaction"].queryset = Transaction.objects.filter(
+                    id=transaction.id
+                )
+
+
+class DryRunDeletedTransacion(forms.Form):
+    transaction = DynamicModelChoiceField(
+        model=Transaction,
+        to_field_name="id",
+        label=_("Transaction"),
+        required=True,
+        queryset=Transaction.objects.none(),
+        widget=TransactionSelect(clear_button=False, income=True, expense=True),
+        help_text=_("Type to search for a transaction"),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.layout = Layout(
+            "transaction",
+            FormActions(
+                NoClassSubmit("submit", _("Test"), css_class="btn btn-primary"),
+            ),
+        )
+
+        if self.data.get("transaction"):
+            try:
+                transaction = Transaction.objects.get(id=self.data.get("transaction"))
+            except Transaction.DoesNotExist:
+                transaction = None
+
+            if transaction:
+                self.fields["transaction"].queryset = Transaction.objects.filter(
+                    id=transaction.id
+                )
+
+
+class DryRunUpdatedTransactionForm(BulkEditTransactionForm):
+    transaction = DynamicModelChoiceField(
+        model=Transaction,
+        to_field_name="id",
+        label=_("Transaction"),
+        required=True,
+        queryset=Transaction.objects.none(),
+        widget=TransactionSelect(clear_button=False, income=True, expense=True),
+        help_text=_("Type to search for a transaction"),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.helper.layout.insert(0, "transaction")
+        self.helper.layout.insert(1, HTML('<hr class="hr my-3" />'))
+
+        # Change submit button
+        self.helper.layout[-1] = FormActions(
+            NoClassSubmit("submit", _("Test"), css_class="btn btn-primary")
+        )
+
+        if self.data.get("transaction"):
+            try:
+                transaction = Transaction.objects.get(id=self.data.get("transaction"))
+            except Transaction.DoesNotExist:
+                transaction = None
+
+            if transaction:
+                self.fields["transaction"].queryset = Transaction.objects.filter(
+                    id=transaction.id
+                )

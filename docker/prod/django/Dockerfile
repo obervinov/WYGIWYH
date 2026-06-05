@@ -1,28 +1,42 @@
-FROM python:3.11-slim-bookworm AS python-build-stage
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS python-build-stage
+
+WORKDIR /app
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
 RUN apt-get update && apt-get install --no-install-recommends -y \
     build-essential \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ./requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip wheel --wheel-dir /usr/src/app/wheels -r requirements.txt
+COPY uv.lock pyproject.toml ./
 
-FROM node:lts-alpine AS webpack_build
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
+
+FROM node:lts-alpine AS vite_build
 WORKDIR /usr/src/frontend
+
+COPY ./frontend/package.json ./frontend/package-lock.json* ./
+
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci || npm install
+
 COPY ./frontend .
 COPY ./app/templates /usr/src/app/templates
-RUN --mount=type=cache,target=/root/.npm \
-    npm install --verbose && \
-    npm run build
+
+RUN npm run build
 
 FROM python:3.11-slim-bookworm AS python-run-stage
 
 ARG VERSION=dev
 ENV APP_VERSION=$VERSION
 
-COPY --from=webpack_build /usr/src/frontend/build /usr/src/frontend/build
+COPY --from=vite_build /usr/src/frontend/build /usr/src/frontend/build
+
+# Copy virtual environment from build stage
+COPY --from=python-build-stage /app/.venv /app/.venv
 
 WORKDIR /usr/src/app
 
@@ -30,22 +44,21 @@ RUN addgroup --system app && \
     adduser --system --ingroup app app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PATH="/app/.venv/bin:$PATH"
 
-COPY --from=python-build-stage /usr/src/app/wheels /wheels/
+# Install runtime dependencies
 RUN --mount=type=cache,target=/root/.cache/apt \
     apt-get update && \
-    apt-get install --no-install-recommends -y gettext supervisor && \
-    rm -rf /var/lib/apt/lists/* && \
-    pip install --upgrade pip && \
-    pip install --no-cache-dir --no-index --find-links=/wheels/ /wheels/* && \
-    rm -rf /wheels/
+    apt-get install --no-install-recommends -y gettext supervisor libpq5 && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --chown=app:app ./docker/prod/django/start /start
 COPY --chown=app:app ./docker/prod/procrastinate/start /start-procrastinate
 COPY --chown=app:app ./docker/prod/supervisord/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY --chown=app:app ./docker/prod/supervisord/supervisord.conf /etc/supervisord.conf
 COPY --chown=app:app ./docker/prod/supervisord/start /start-single
+
 RUN sed -i 's/\r$//g' /start && \
     chmod +x /start && \
     sed -i 's/\r$//g' /start-procrastinate && \
@@ -63,3 +76,6 @@ RUN chown -R app:app /usr/src/app && \
 USER app
 
 RUN python manage.py compilemessages --settings "WYGIWYH.settings"
+RUN python manage.py collectstatic --noinput
+
+CMD ["/start-single"]

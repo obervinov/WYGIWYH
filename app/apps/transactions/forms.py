@@ -1,37 +1,39 @@
-from crispy_bootstrap5.bootstrap5 import Switch, BS5Accordion
-from crispy_forms.bootstrap import FormActions, AccordionGroup
-from crispy_forms.helper import FormHelper
-from crispy_forms.layout import (
-    Layout,
-    Row,
-    Column,
-    Field,
-    Div,
-    HTML,
-)
-from django import forms
-from django.db.models import Q
-from django.utils.translation import gettext_lazy as _
+from copy import deepcopy
 
 from apps.accounts.models import Account
 from apps.common.fields.forms.dynamic_select import (
     DynamicModelChoiceField,
     DynamicModelMultipleChoiceField,
 )
+from apps.common.middleware.thread_local import get_current_user
+from apps.common.widgets.crispy.daisyui import Switch
 from apps.common.widgets.crispy.submit import NoClassSubmit
 from apps.common.widgets.datepicker import AirDatePickerInput, AirMonthYearPickerInput
 from apps.common.widgets.decimal import ArbitraryDecimalDisplayNumberInput
 from apps.common.widgets.tom_select import TomSelect
 from apps.rules.signals import transaction_created, transaction_updated
 from apps.transactions.models import (
+    InstallmentPlan,
+    QuickTransaction,
+    RecurringTransaction,
     Transaction,
     TransactionCategory,
-    TransactionTag,
-    InstallmentPlan,
-    RecurringTransaction,
     TransactionEntity,
-    QuickTransaction,
+    TransactionTag,
 )
+from crispy_forms.bootstrap import AccordionGroup, AppendedText, FormActions, Accordion
+from crispy_forms.helper import FormHelper
+from crispy_forms.layout import (
+    HTML,
+    Column,
+    Div,
+    Field,
+    Layout,
+    Row,
+)
+from django import forms
+from django.db.models import Q
+from django.utils.translation import gettext_lazy as _
 
 
 class TransactionForm(forms.ModelForm):
@@ -115,6 +117,9 @@ class TransactionForm(forms.ModelForm):
             self.fields["account"].queryset = Account.objects.filter(
                 is_archived=False,
             )
+            user_settings = get_current_user().settings
+            if user_settings.default_account:
+                self.fields["account"].initial = user_settings.default_account
 
             self.fields["category"].queryset = TransactionCategory.objects.filter(
                 active=True
@@ -132,21 +137,18 @@ class TransactionForm(forms.ModelForm):
             ),
             Field("is_paid", template="transactions/widgets/paid_toggle_button.html"),
             Row(
-                Column("account", css_class="form-group col-md-6 mb-0"),
-                Column("entities", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("account"),
+                Column("entities"),
             ),
             Row(
-                Column(Field("date"), css_class="form-group col-md-6 mb-0"),
-                Column(Field("reference_date"), css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column(Field("date")),
+                Column(Field("reference_date")),
             ),
             "description",
             Field("amount", inputmode="decimal"),
             Row(
-                Column("category", css_class="form-group col-md-6 mb-0"),
-                Column("tags", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("category"),
+                Column("tags"),
             ),
             "notes",
         )
@@ -162,20 +164,18 @@ class TransactionForm(forms.ModelForm):
             Field("is_paid", template="transactions/widgets/paid_toggle_button.html"),
             "account",
             Row(
-                Column(Field("date"), css_class="form-group col-md-6 mb-0"),
-                Column(Field("reference_date"), css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column(Field("date")),
+                Column(Field("reference_date")),
             ),
             "description",
             Field("amount", inputmode="decimal"),
-            BS5Accordion(
+            Accordion(
                 AccordionGroup(
                     _("More"),
                     "entities",
                     Row(
-                        Column("category", css_class="form-group col-md-6 mb-0"),
-                        Column("tags", css_class="form-group col-md-6 mb-0"),
-                        css_class="form-row",
+                        Column("category"),
+                        Column("tags"),
                     ),
                     "notes",
                     active=False,
@@ -185,9 +185,7 @@ class TransactionForm(forms.ModelForm):
                 css_class="mb-3",
             ),
             FormActions(
-                NoClassSubmit(
-                    "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                ),
+                NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
             ),
         )
 
@@ -200,29 +198,25 @@ class TransactionForm(forms.ModelForm):
             )
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.fields["amount"].widget = ArbitraryDecimalDisplayNumberInput()
             self.helper.layout.append(
                 Div(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                     NoClassSubmit(
                         "submit_and_similar",
                         _("Save and add similar"),
-                        css_class="btn btn-outline-primary",
+                        css_class="btn btn-primary btn-soft",
                     ),
                     NoClassSubmit(
                         "submit_and_another",
                         _("Save and add another"),
-                        css_class="btn btn-outline-primary",
+                        css_class="btn btn-primary btn-soft",
                     ),
-                    css_class="d-grid gap-2",
+                    css_class="flex flex-col gap-2 mt-3",
                 ),
             )
 
@@ -239,11 +233,16 @@ class TransactionForm(forms.ModelForm):
     def save(self, **kwargs):
         is_new = not self.instance.id
 
+        if not is_new:
+            old_data = deepcopy(Transaction.objects.get(pk=self.instance.id))
+        else:
+            old_data = None
+
         instance = super().save(**kwargs)
         if is_new:
             transaction_created.send(sender=instance)
         else:
-            transaction_updated.send(sender=instance)
+            transaction_updated.send(sender=instance, old_data=old_data)
 
         return instance
 
@@ -341,23 +340,16 @@ class QuickTransactionForm(forms.ModelForm):
             ),
             Field("is_paid", template="transactions/widgets/paid_toggle_button.html"),
             "name",
-            HTML("<hr />"),
+            HTML('<hr class="hr my-3" />'),
             Row(
-                Column("account", css_class="form-group col-md-6 mb-0"),
-                Column("entities", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
-            ),
-            Row(
-                Column(Field("date"), css_class="form-group col-md-6 mb-0"),
-                Column(Field("reference_date"), css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("account"),
+                Column("entities"),
             ),
             "description",
             Field("amount", inputmode="decimal"),
             Row(
-                Column("category", css_class="form-group col-md-6 mb-0"),
-                Column("tags", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("category"),
+                Column("tags"),
             ),
             "notes",
             Switch("mute"),
@@ -370,58 +362,131 @@ class QuickTransactionForm(forms.ModelForm):
             )
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.fields["amount"].widget = ArbitraryDecimalDisplayNumberInput()
             self.helper.layout.append(
-                Div(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary"
-                    ),
-                    css_class="d-grid gap-2",
+                FormActions(
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
 
-class BulkEditTransactionForm(TransactionForm):
-    is_paid = forms.NullBooleanField(required=False)
+class BulkEditTransactionForm(forms.Form):
+    type = forms.ChoiceField(
+        choices=(Transaction.Type.choices),
+        required=False,
+        label=_("Type"),
+    )
+    is_paid = forms.NullBooleanField(
+        required=False,
+        label=_("Paid"),
+    )
+    account = DynamicModelChoiceField(
+        model=Account,
+        required=False,
+        label=_("Account"),
+        queryset=Account.objects.filter(is_archived=False),
+        widget=TomSelect(clear_button=False, group_by="group"),
+    )
+    date = forms.DateField(
+        label=_("Date"),
+        required=False,
+        widget=AirDatePickerInput(clear_button=False),
+    )
+    reference_date = forms.DateField(
+        widget=AirMonthYearPickerInput(),
+        label=_("Reference Date"),
+        required=False,
+    )
+    amount = forms.DecimalField(
+        max_digits=42,
+        decimal_places=30,
+        required=False,
+        label=_("Amount"),
+        widget=ArbitraryDecimalDisplayNumberInput(),
+    )
+    description = forms.CharField(
+        max_length=500, required=False, label=_("Description")
+    )
+    notes = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 3}),
+        label=_("Notes"),
+    )
+    category = DynamicModelChoiceField(
+        create_field="name",
+        model=TransactionCategory,
+        required=False,
+        label=_("Category"),
+        queryset=TransactionCategory.objects.filter(active=True),
+    )
+    tags = DynamicModelMultipleChoiceField(
+        model=TransactionTag,
+        to_field_name="name",
+        create_field="name",
+        required=False,
+        label=_("Tags"),
+        queryset=TransactionTag.objects.filter(active=True),
+    )
+    entities = DynamicModelMultipleChoiceField(
+        model=TransactionEntity,
+        to_field_name="name",
+        create_field="name",
+        required=False,
+        label=_("Entities"),
+        queryset=TransactionEntity.objects.all(),
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Make all fields optional
-        for field_name, field in self.fields.items():
-            field.required = False
 
-        del self.helper.layout[-1]  # Remove button
-        del self.helper.layout[0:2]  # Remove type, is_paid field
+        self.fields["account"].queryset = Account.objects.filter(
+            is_archived=False,
+        )
 
-        self.helper.layout.insert(
-            0,
+        self.fields["category"].queryset = TransactionCategory.objects.filter(
+            active=True
+        )
+        self.fields["tags"].queryset = TransactionTag.objects.filter(active=True)
+        self.fields["entities"].queryset = TransactionEntity.objects.all()
+
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.form_method = "post"
+        self.helper.layout = Layout(
             Field(
                 "type",
                 template="transactions/widgets/unselectable_income_expense_toggle_buttons.html",
             ),
-        )
-
-        self.helper.layout.insert(
-            1,
             Field(
                 "is_paid",
                 template="transactions/widgets/unselectable_paid_toggle_button.html",
             ),
-        )
-
-        self.helper.layout.append(
+            Row(
+                Column("account"),
+                Column("entities"),
+            ),
+            Row(
+                Column(Field("date")),
+                Column(Field("reference_date")),
+            ),
+            "description",
+            Field("amount", inputmode="decimal"),
+            Row(
+                Column("category"),
+                Column("tags"),
+            ),
+            "notes",
             FormActions(
-                NoClassSubmit(
-                    "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                ),
+                NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
             ),
         )
+
+        self.fields["amount"].widget = ArbitraryDecimalDisplayNumberInput()
+        self.fields["date"].widget = AirDatePickerInput(clear_button=False)
 
 
 class TransferForm(forms.Form):
@@ -515,62 +580,34 @@ class TransferForm(forms.Form):
 
         self.helper.layout = Layout(
             Row(
-                Column(Field("date"), css_class="form-group col-md-6 mb-0"),
+                Column(Field("date")),
                 Column(
                     Field("reference_date"),
-                    css_class="form-group col-md-6 mb-0",
                 ),
-                css_class="form-row",
             ),
             Field("description"),
             Field("notes"),
             Switch("mute"),
             Row(
-                Column(
-                    Row(
-                        Column(
-                            "from_account",
-                            css_class="form-group col-md-6 mb-0",
-                        ),
-                        Column(
-                            Field("from_amount"),
-                            css_class="form-group col-md-6 mb-0",
-                        ),
-                        css_class="form-row",
-                    ),
-                    Row(
-                        Column("from_category", css_class="form-group col-md-6 mb-0"),
-                        Column("from_tags", css_class="form-group col-md-6 mb-0"),
-                        css_class="form-row",
-                    ),
-                ),
-                css_class="p-1 mx-1 my-3 border rounded-3",
+                Column("from_account"),
+                Column(Field("from_amount")),
+                Column("from_category"),
+                Column("from_tags"),
+                css_class="bg-base-100 rounded-box p-4 border-base-content/60 border my-3",
             ),
             Row(
                 Column(
-                    Row(
-                        Column(
-                            "to_account",
-                            css_class="form-group col-md-6 mb-0",
-                        ),
-                        Column(
-                            Field("to_amount"),
-                            css_class="form-group col-md-6 mb-0",
-                        ),
-                        css_class="form-row",
-                    ),
-                    Row(
-                        Column("to_category", css_class="form-group col-md-6 mb-0"),
-                        Column("to_tags", css_class="form-group col-md-6 mb-0"),
-                        css_class="form-row",
-                    ),
+                    "to_account",
                 ),
-                css_class="p-1 mx-1 my-3 border rounded-3",
+                Column(
+                    Field("to_amount"),
+                ),
+                Column("to_category"),
+                Column("to_tags"),
+                css_class="bg-base-100 rounded-box p-4 border-base-content/60 border",
             ),
             FormActions(
-                NoClassSubmit(
-                    "submit", _("Transfer"), css_class="btn btn-outline-primary w-100"
-                ),
+                NoClassSubmit("submit", _("Transfer"), css_class="btn btn-primary"),
             ),
         )
 
@@ -735,6 +772,9 @@ class InstallmentPlanForm(forms.ModelForm):
             ).distinct()
         else:
             self.fields["account"].queryset = Account.objects.filter(is_archived=False)
+            user_settings = get_current_user().settings
+            if user_settings.default_account:
+                self.fields["account"].initial = user_settings.default_account
 
             self.fields["category"].queryset = TransactionCategory.objects.filter(
                 active=True
@@ -756,30 +796,26 @@ class InstallmentPlanForm(forms.ModelForm):
                 template="transactions/widgets/income_expense_toggle_buttons.html",
             ),
             Row(
-                Column("account", css_class="form-group col-md-6 mb-0"),
-                Column("entities", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("account"),
+                Column("entities"),
             ),
             "description",
             Switch("add_description_to_transaction"),
             "notes",
             Switch("add_notes_to_transaction"),
             Row(
-                Column("number_of_installments", css_class="form-group col-md-6 mb-0"),
-                Column("installment_start", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("number_of_installments"),
+                Column("installment_start"),
             ),
             Row(
-                Column("start_date", css_class="form-group col-md-4 mb-0"),
-                Column("reference_date", css_class="form-group col-md-4 mb-0"),
-                Column("recurrence", css_class="form-group col-md-4 mb-0"),
-                css_class="form-row",
+                Column("start_date", css_class="col-span-12 md:col-span-4"),
+                Column("reference_date", css_class="col-span-12 md:col-span-4"),
+                Column("recurrence", css_class="col-span-12 md:col-span-4"),
             ),
             "installment_amount",
             Row(
-                Column("category", css_class="form-group col-md-6 mb-0"),
-                Column("tags", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("category"),
+                Column("tags"),
             ),
         )
 
@@ -789,17 +825,13 @@ class InstallmentPlanForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -832,17 +864,13 @@ class TransactionTagForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -864,17 +892,13 @@ class TransactionEntityForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -899,17 +923,13 @@ class TransactionCategoryForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -963,6 +983,7 @@ class RecurringTransactionForm(forms.ModelForm):
             "notes",
             "add_notes_to_transaction",
             "entities",
+            "keep_at_most",
         ]
         widgets = {
             "reference_date": AirMonthYearPickerInput(),
@@ -996,6 +1017,10 @@ class RecurringTransactionForm(forms.ModelForm):
             ).distinct()
         else:
             self.fields["account"].queryset = Account.objects.filter(is_archived=False)
+            
+            user_settings = get_current_user().settings
+            if user_settings.default_account:
+                self.fields["account"].initial = user_settings.default_account
 
             self.fields["category"].queryset = TransactionCategory.objects.filter(
                 active=True
@@ -1017,31 +1042,28 @@ class RecurringTransactionForm(forms.ModelForm):
                 template="transactions/widgets/income_expense_toggle_buttons.html",
             ),
             Row(
-                Column("account", css_class="form-group col-md-6 mb-0"),
-                Column("entities", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("account"),
+                Column("entities"),
             ),
             "description",
             Switch("add_description_to_transaction"),
             "amount",
             Row(
-                Column("category", css_class="form-group col-md-6 mb-0"),
-                Column("tags", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("category"),
+                Column("tags"),
             ),
             "notes",
             Switch("add_notes_to_transaction"),
             Row(
-                Column("start_date", css_class="form-group col-md-6 mb-0"),
-                Column("reference_date", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("start_date"),
+                Column("reference_date"),
             ),
             Row(
-                Column("recurrence_interval", css_class="form-group col-md-4 mb-0"),
-                Column("recurrence_type", css_class="form-group col-md-4 mb-0"),
-                Column("end_date", css_class="form-group col-md-4 mb-0"),
-                css_class="form-row",
+                Column("recurrence_interval", css_class="col-span-12 md:col-span-4"),
+                Column("recurrence_type", css_class="col-span-12 md:col-span-4"),
+                Column("end_date", css_class="col-span-12 md:col-span-4"),
             ),
+            AppendedText("keep_at_most", _("future transactions")),
         )
 
         self.fields["amount"].widget = ArbitraryDecimalDisplayNumberInput()
@@ -1051,17 +1073,13 @@ class RecurringTransactionForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -1083,5 +1101,6 @@ class RecurringTransactionForm(forms.ModelForm):
             instance.create_upcoming_transactions()
         else:
             instance.update_unpaid_transactions()
+            instance.generate_upcoming_transactions()
 
         return instance

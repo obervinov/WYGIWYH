@@ -13,7 +13,9 @@ from apps.insights.forms import (
 )
 
 
-def get_transactions(request, include_unpaid=True, include_silent=False):
+def get_transactions(
+    request, include_unpaid=True, include_silent=False, include_untracked_accounts=False
+):
     transactions = Transaction.objects.all()
 
     filter_type = request.GET.get("type", None)
@@ -94,5 +96,12 @@ def get_transactions(request, include_unpaid=True, include_silent=False):
         transactions = transactions.exclude(
             Q(Q(category__mute=True) & ~Q(category=None)) | Q(mute=True)
         )
+
+    if not include_untracked_accounts:
+        transactions = transactions.exclude(
+            account__in=request.user.untracked_accounts.all()
+        )
+
+    transactions = transactions.exclude(account__currency__is_archived=True)
 
     return transactions

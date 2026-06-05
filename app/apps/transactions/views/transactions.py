@@ -1,6 +1,7 @@
 import datetime
 from copy import deepcopy
 
+from dateutil.relativedelta import relativedelta
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
@@ -141,26 +142,105 @@ def transaction_simple_add(request):
         year=year,
     ).date()
 
+    # Build initial data from query parameters
+    initial_data = {
+        "date": expected_date,
+        "type": transaction_type,
+    }
+
+    # Handle date param (ISO format: YYYY-MM-DD) - overrides expected_date
+    date_param = request.GET.get("date")
+    if date_param:
+        try:
+            initial_data["date"] = datetime.datetime.strptime(
+                date_param, "%Y-%m-%d"
+            ).date()
+        except ValueError:
+            pass
+
+    # Handle reference_date param (ISO format: YYYY-MM-DD)
+    reference_date_param = request.GET.get("reference_date")
+    if reference_date_param:
+        try:
+            initial_data["reference_date"] = datetime.datetime.strptime(
+                reference_date_param, "%Y-%m-%d"
+            ).date()
+        except ValueError:
+            pass
+
+    # Handle account param (by ID or name)
+    account_param = request.GET.get("account")
+    if account_param:
+        try:
+            initial_data["account"] = int(account_param)
+        except (ValueError, TypeError):
+            # Try to find by name
+            from apps.accounts.models import Account
+
+            account = Account.objects.filter(
+                name__iexact=account_param, is_archived=False
+            ).first()
+            if account:
+                initial_data["account"] = account.pk
+
+    # Handle is_paid param (boolean)
+    is_paid = request.GET.get("is_paid")
+    if is_paid is not None:
+        initial_data["is_paid"] = is_paid.lower() in ("true", "1", "yes")
+
+    # Handle amount param (decimal)
+    amount = request.GET.get("amount")
+    if amount:
+        try:
+            initial_data["amount"] = amount
+        except (ValueError, TypeError):
+            pass
+
+    # Handle description param (string)
+    description = request.GET.get("description")
+    if description:
+        initial_data["description"] = description
+
+    # Handle notes param (string)
+    notes = request.GET.get("notes")
+    if notes:
+        initial_data["notes"] = notes
+
+    # Handle category param (by ID or name)
+    category_param = request.GET.get("category")
+    if category_param:
+        try:
+            initial_data["category"] = int(category_param)
+        except (ValueError, TypeError):
+            # Try to find by name
+            from apps.transactions.models import TransactionCategory
+
+            category = TransactionCategory.objects.filter(
+                name__iexact=category_param, active=True
+            ).first()
+            if category:
+                initial_data["category"] = category.pk
+
+    # Handle tags param (comma-separated names)
+    tags = request.GET.get("tags")
+    if tags:
+        initial_data["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
+
+    # Handle entities param (comma-separated names)
+    entities = request.GET.get("entities")
+    if entities:
+        initial_data["entities"] = [e.strip() for e in entities.split(",") if e.strip()]
+
     if request.method == "POST":
         form = TransactionForm(request.POST)
         if form.is_valid():
             form.save()
             messages.success(request, _("Transaction added successfully"))
-
-        form = TransactionForm(
-            initial={
-                "date": expected_date,
-                "type": transaction_type,
-            },
-        )
+            # Only reset form after successful save
+            form = TransactionForm(initial=initial_data)
 
     else:
-        form = TransactionForm(
-            initial={
-                "date": expected_date,
-                "type": transaction_type,
-            },
-        )
+        form = TransactionForm(initial=initial_data)
 
     return render(
         request,
@@ -212,6 +292,7 @@ def transactions_bulk_edit(request):
         if form.is_valid():
             # Apply changes from the form to all selected transactions
             for transaction in transactions:
+                old_data = deepcopy(transaction)
                 for field_name, value in form.cleaned_data.items():
                     if value or isinstance(
                         value, bool
@@ -224,7 +305,7 @@ def transactions_bulk_edit(request):
                             setattr(transaction, field_name, value)
 
                 transaction.save()
-                transaction_updated.send(sender=transaction)
+                transaction_updated.send(sender=transaction, old_data=old_data)
 
             messages.success(
                 request,
@@ -372,10 +453,13 @@ def transactions_transfer(request):
 @require_http_methods(["GET"])
 def transaction_pay(request, transaction_id):
     transaction = get_object_or_404(Transaction, pk=transaction_id)
+    old_data = deepcopy(transaction)
+
     new_is_paid = False if transaction.is_paid else True
     transaction.is_paid = new_is_paid
     transaction.save()
-    transaction_updated.send(sender=transaction)
+
+    transaction_updated.send(sender=transaction, old_data=old_data)
 
     response = render(
         request,
@@ -383,7 +467,7 @@ def transaction_pay(request, transaction_id):
         context={"transaction": transaction, **request.GET},
     )
     response.headers["HX-Trigger"] = (
-        f'{"paid" if new_is_paid else "unpaid"}, selective_update'
+        f"{'paid' if new_is_paid else 'unpaid'}, selective_update"
     )
     return response
 
@@ -393,11 +477,12 @@ def transaction_pay(request, transaction_id):
 @require_http_methods(["GET"])
 def transaction_mute(request, transaction_id):
     transaction = get_object_or_404(Transaction, pk=transaction_id)
+    old_data = deepcopy(transaction)
 
     new_mute = False if transaction.mute else True
     transaction.mute = new_mute
     transaction.save()
-    transaction_updated.send(sender=transaction)
+    transaction_updated.send(sender=transaction, old_data=old_data)
 
     response = render(
         request,
@@ -406,6 +491,50 @@ def transaction_mute(request, transaction_id):
     )
     response.headers["HX-Trigger"] = "selective_update"
     return response
+
+
+@only_htmx
+@login_required
+@require_http_methods(["GET"])
+def transaction_change_month(request, transaction_id, change_type):
+    transaction: Transaction = get_object_or_404(Transaction, pk=transaction_id)
+    old_data = deepcopy(transaction)
+
+    if change_type == "next":
+        transaction.reference_date = transaction.reference_date + relativedelta(
+            months=1
+        )
+        transaction.save()
+        transaction_updated.send(sender=transaction, old_data=old_data)
+    elif change_type == "previous":
+        transaction.reference_date = transaction.reference_date - relativedelta(
+            months=1
+        )
+        transaction.save()
+        transaction_updated.send(sender=transaction, old_data=old_data)
+
+    return HttpResponse(
+        status=204,
+        headers={"HX-Trigger": "updated"},
+    )
+
+
+@only_htmx
+@login_required
+@require_http_methods(["GET"])
+def transaction_move_to_today(request, transaction_id):
+    transaction: Transaction = get_object_or_404(Transaction, pk=transaction_id)
+
+    old_data = deepcopy(transaction)
+
+    transaction.date = timezone.localdate(timezone.now())
+    transaction.save()
+    transaction_updated.send(sender=transaction, old_data=old_data)
+
+    return HttpResponse(
+        status=204,
+        headers={"HX-Trigger": "updated"},
+    )
 
 
 @login_required
@@ -433,6 +562,8 @@ def transaction_all_list(request):
         if order != request.session.get("all_transactions_order", "default"):
             request.session["all_transactions_order"] = order
 
+    today = timezone.localdate(timezone.now())
+
     transactions = Transaction.objects.prefetch_related(
         "account",
         "account__group",
@@ -446,12 +577,27 @@ def transaction_all_list(request):
         "dca_income_entries",
     ).all()
 
-    transactions = default_order(transactions, order=order)
-
     f = TransactionsFilter(request.GET, queryset=transactions)
 
+    # Late transactions: date < today and is_paid = False (only shown for default ordering on first page)
+    late_transactions = None
     page_number = request.GET.get("page", 1)
-    paginator = Paginator(f.qs, 100)
+    if order == "default" and str(page_number) == "1":
+        late_transactions = f.qs.filter(
+            date__lt=today,
+            is_paid=False,
+        ).order_by("date", "id")
+        # Exclude late transactions from the main paginated list
+        main_transactions = f.qs.exclude(
+            date__lt=today,
+            is_paid=False,
+        )
+    else:
+        main_transactions = f.qs
+
+    main_transactions = default_order(main_transactions, order=order)
+
+    paginator = Paginator(main_transactions, 100)
     page_obj = paginator.get_page(page_number)
 
     return render(
@@ -460,6 +606,7 @@ def transaction_all_list(request):
         {
             "page_obj": page_obj,
             "paginator": paginator,
+            "late_transactions": late_transactions,
         },
     )
 
@@ -547,7 +694,10 @@ def transaction_all_currency_summary(request):
 
     f = TransactionsFilter(request.GET, queryset=transactions)
 
-    currency_data = calculate_currency_totals(f.qs.all(), ignore_empty=True)
+    currency_data = calculate_currency_totals(
+        f.qs.exclude(account__in=request.user.untracked_accounts.all()),
+        ignore_empty=True,
+    )
     currency_percentages = calculate_percentage_distribution(currency_data)
 
     context = {

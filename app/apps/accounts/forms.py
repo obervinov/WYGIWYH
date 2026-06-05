@@ -1,20 +1,20 @@
-from crispy_bootstrap5.bootstrap5 import Switch
+from apps.accounts.models import Account, AccountGroup
+from apps.common.fields.forms.dynamic_select import (
+    DynamicModelChoiceField,
+    DynamicModelMultipleChoiceField,
+)
+from apps.common.widgets.crispy.daisyui import Switch
+from apps.common.widgets.crispy.submit import NoClassSubmit
+from apps.common.widgets.decimal import ArbitraryDecimalDisplayNumberInput
+from apps.common.widgets.tom_select import TomSelect
+from apps.currencies.models import Currency
+from apps.transactions.models import TransactionCategory, TransactionTag
 from crispy_forms.bootstrap import FormActions
 from crispy_forms.helper import FormHelper
-from crispy_forms.layout import Layout, Field, Column, Row
+from crispy_forms.layout import Column, Field, Layout, Row
 from django import forms
+from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
-
-from apps.accounts.models import Account
-from apps.accounts.models import AccountGroup
-from apps.common.fields.forms.dynamic_select import (
-    DynamicModelMultipleChoiceField,
-    DynamicModelChoiceField,
-)
-from apps.common.widgets.crispy.submit import NoClassSubmit
-from apps.common.widgets.tom_select import TomSelect
-from apps.transactions.models import TransactionCategory, TransactionTag
-from apps.common.widgets.decimal import ArbitraryDecimalDisplayNumberInput
 
 
 class AccountGroupForm(forms.ModelForm):
@@ -36,17 +36,13 @@ class AccountGroupForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -79,6 +75,18 @@ class AccountForm(forms.ModelForm):
 
         self.fields["group"].queryset = AccountGroup.objects.all()
 
+        if self.instance.id:
+            qs = Currency.objects.filter(
+                Q(is_archived=False) | Q(accounts=self.instance.id)
+            ).distinct()
+            self.fields["currency"].queryset = qs
+            self.fields["exchange_currency"].queryset = qs
+
+        else:
+            qs = Currency.objects.filter(Q(is_archived=False))
+            self.fields["currency"].queryset = qs
+            self.fields["exchange_currency"].queryset = qs
+
         self.helper = FormHelper()
         self.helper.form_tag = False
         self.helper.form_method = "post"
@@ -94,17 +102,13 @@ class AccountForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Update"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Update"), css_class="btn btn-primary"),
                 ),
             )
         else:
             self.helper.layout.append(
                 FormActions(
-                    NoClassSubmit(
-                        "submit", _("Add"), css_class="btn btn-outline-primary w-100"
-                    ),
+                    NoClassSubmit("submit", _("Add"), css_class="btn btn-primary"),
                 ),
             )
 
@@ -142,9 +146,8 @@ class AccountBalanceForm(forms.Form):
         self.helper.layout = Layout(
             "new_balance",
             Row(
-                Column("category", css_class="form-group col-md-6 mb-0"),
-                Column("tags", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("category"),
+                Column("tags"),
             ),
             Field("account_id"),
         )

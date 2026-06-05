@@ -1,11 +1,4 @@
 import django_filters
-from crispy_forms.helper import FormHelper
-from crispy_forms.layout import Layout, Field, Row, Column
-from django import forms
-from django.db.models import Q
-from django.utils.translation import gettext_lazy as _
-from django_filters import Filter
-
 from apps.accounts.models import Account
 from apps.common.fields.month_year import MonthYearFormField
 from apps.common.widgets.datepicker import AirDatePickerInput
@@ -15,13 +8,24 @@ from apps.currencies.models import Currency
 from apps.transactions.models import (
     Transaction,
     TransactionCategory,
-    TransactionTag,
     TransactionEntity,
+    TransactionTag,
 )
+from crispy_forms.helper import FormHelper
+from crispy_forms.layout import Column, Field, Layout, Row
+from django import forms
+from django.db.models import Q
+from django.utils.translation import gettext_lazy as _
+from django_filters import Filter
 
 SITUACAO_CHOICES = (
     ("1", _("Paid")),
     ("0", _("Projected")),
+)
+
+MUTE_STATUS_CHOICES = (
+    ("active", _("Active")),
+    ("muted", _("Muted")),
 )
 
 
@@ -60,30 +64,29 @@ class TransactionsFilter(django_filters.FilterSet):
         label=_("Currencies"),
         widget=TomSelectMultiple(checkboxes=True, remove_button=True),
     )
-    category = django_filters.ModelMultipleChoiceFilter(
-        field_name="category__name",
-        queryset=TransactionCategory.objects.all(),
-        to_field_name="name",
+    category = django_filters.MultipleChoiceFilter(
         label=_("Categories"),
         widget=TomSelectMultiple(checkboxes=True, remove_button=True),
+        method="filter_category",
     )
-    tags = django_filters.ModelMultipleChoiceFilter(
-        field_name="tags__name",
-        queryset=TransactionTag.objects.all(),
-        to_field_name="name",
+    tags = django_filters.MultipleChoiceFilter(
         label=_("Tags"),
         widget=TomSelectMultiple(checkboxes=True, remove_button=True),
+        method="filter_tags",
     )
-    entities = django_filters.ModelMultipleChoiceFilter(
-        field_name="entities__name",
-        queryset=TransactionEntity.objects.all(),
-        to_field_name="name",
+    entities = django_filters.MultipleChoiceFilter(
         label=_("Entities"),
         widget=TomSelectMultiple(checkboxes=True, remove_button=True),
+        method="filter_entities",
     )
     is_paid = django_filters.MultipleChoiceFilter(
         choices=SITUACAO_CHOICES,
         field_name="is_paid",
+    )
+    mute_status = django_filters.MultipleChoiceFilter(
+        choices=MUTE_STATUS_CHOICES,
+        method="filter_mute_status",
+        label=_("Mute Status"),
     )
     date_start = django_filters.DateFilter(
         field_name="date",
@@ -125,6 +128,7 @@ class TransactionsFilter(django_filters.FilterSet):
             "is_paid",
             "category",
             "tags",
+            "entities",
             "date_start",
             "date_end",
             "reference_date_start",
@@ -146,6 +150,9 @@ class TransactionsFilter(django_filters.FilterSet):
             if data.get("is_paid") is None:
                 data.setlist("is_paid", ["1", "0"])
 
+            if data.get("mute_status") is None:
+                data.setlist("mute_status", ["active", "muted"])
+
         super().__init__(data, *args, **kwargs)
 
         self.form.helper = FormHelper()
@@ -161,17 +168,19 @@ class TransactionsFilter(django_filters.FilterSet):
                 "is_paid",
                 template="transactions/widgets/transaction_type_filter_buttons.html",
             ),
+            Field(
+                "mute_status",
+                template="transactions/widgets/transaction_type_filter_buttons.html",
+            ),
             Field("description"),
             Row(Column("date_start"), Column("date_end")),
             Row(
-                Column("reference_date_start", css_class="form-group col-md-6 mb-0"),
-                Column("reference_date_end", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("reference_date_start"),
+                Column("reference_date_end"),
             ),
             Row(
-                Column("from_amount", css_class="form-group col-md-6 mb-0"),
-                Column("to_amount", css_class="form-group col-md-6 mb-0"),
-                css_class="form-row",
+                Column("from_amount"),
+                Column("to_amount"),
             ),
             Field("account", size=1),
             Field("currency", size=1),
@@ -186,6 +195,126 @@ class TransactionsFilter(django_filters.FilterSet):
         self.form.fields["date_end"].widget = AirDatePickerInput()
 
         self.form.fields["account"].queryset = Account.objects.all()
-        self.form.fields["category"].queryset = TransactionCategory.objects.all()
-        self.form.fields["tags"].queryset = TransactionTag.objects.all()
-        self.form.fields["entities"].queryset = TransactionEntity.objects.all()
+        category_choices = list(
+            TransactionCategory.objects.values_list("name", "name").order_by("name")
+        )
+        custom_choices = [
+            ("any", _("Categorized")),
+            ("uncategorized", _("Uncategorized")),
+        ]
+        self.form.fields["category"].choices = custom_choices + category_choices
+        tag_choices = list(
+            TransactionTag.objects.values_list("name", "name").order_by("name")
+        )
+        custom_tag_choices = [("any", _("Tagged")), ("untagged", _("Untagged"))]
+        self.form.fields["tags"].choices = custom_tag_choices + tag_choices
+        entity_choices = list(
+            TransactionEntity.objects.values_list("name", "name").order_by("name")
+        )
+        custom_entity_choices = [
+            ("any", _("Any entity")),
+            ("no_entity", _("No entity")),
+        ]
+        self.form.fields["entities"].choices = custom_entity_choices + entity_choices
+
+    @staticmethod
+    def filter_category(queryset, name, value):
+        if not value:
+            return queryset
+
+        value = list(value)
+
+        if "any" in value:
+            return queryset.filter(category__isnull=False)
+
+        q = Q()
+        if "uncategorized" in value:
+            q |= Q(category__isnull=True)
+            value.remove("uncategorized")
+
+        if value:
+            q |= Q(category__name__in=value)
+
+        if q.children:
+            return queryset.filter(q)
+
+        return queryset
+
+    @staticmethod
+    def filter_tags(queryset, name, value):
+        if not value:
+            return queryset
+
+        value = list(value)
+
+        if "any" in value:
+            return queryset.filter(tags__isnull=False).distinct()
+
+        q = Q()
+        if "untagged" in value:
+            q |= Q(tags__isnull=True)
+            value.remove("untagged")
+
+        if value:
+            q |= Q(tags__name__in=value)
+
+        if q.children:
+            return queryset.filter(q).distinct()
+
+        return queryset
+
+    @staticmethod
+    def filter_entities(queryset, name, value):
+        if not value:
+            return queryset
+
+        value = list(value)
+
+        if "any" in value:
+            return queryset.filter(entities__isnull=False).distinct()
+
+        q = Q()
+        if "no_entity" in value:
+            q |= Q(entities__isnull=True)
+            value.remove("no_entity")
+
+        if value:
+            q |= Q(entities__name__in=value)
+
+        if q.children:
+            return queryset.filter(q).distinct()
+
+        return queryset
+
+    @staticmethod
+    def filter_mute_status(queryset, name, value):
+        from apps.common.middleware.thread_local import get_current_user
+
+        if not value:
+            return queryset
+
+        value = list(value)
+
+        # If both are selected, return all
+        if "active" in value and "muted" in value:
+            return queryset
+
+        user = get_current_user()
+
+        # Only Active selected: exclude muted transactions
+        if "active" in value:
+            return (
+                queryset.exclude(account__untracked_by=user)
+                .filter(
+                    mute=False,
+                )
+                .filter(Q(category__mute=False) | Q(category__isnull=True))
+            )
+
+        # Only Muted selected: include only muted transactions
+        if "muted" in value:
+            return queryset.filter(
+                Q(account__untracked_by=user) | Q(category__mute=True) | Q(mute=True)
+            )
+
+        return queryset

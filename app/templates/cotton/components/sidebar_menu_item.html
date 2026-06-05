@@ -1,0 +1,13 @@
+{% load active_link %}
+<li>
+  <a href="{% url url %}"
+     class="text-xs flex items-center no-underline ps-3 p-2 rounded-box sidebar-item {% active_link views=active css_class="sidebar-active" %}"
+      {% if tooltip %}
+     data-tippy-placement="right"
+     data-tippy-content="{{ tooltip }}"
+      {% endif %}>
+    <i class="{{ icon }} fa-fw"></i>
+    <span
+        class="ms-3 font-medium">{{ title }}</span>
+  </a>
+</li>

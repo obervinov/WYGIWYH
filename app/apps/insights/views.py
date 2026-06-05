@@ -26,6 +26,8 @@ from apps.insights.utils.sankey import (
     generate_sankey_data_by_currency,
 )
 from apps.insights.utils.transactions import get_transactions
+from apps.insights.utils.year_by_year import get_year_by_year_data
+from apps.insights.utils.month_by_month import get_month_by_month_data
 from apps.transactions.models import TransactionCategory, Transaction
 from apps.transactions.utils.calculations import calculate_currency_totals
 
@@ -74,7 +76,9 @@ def index(request):
 def sankey_by_account(request):
     # Get filtered transactions
 
-    transactions = get_transactions(request)
+    transactions = get_transactions(
+        request, include_untracked_accounts=True, include_silent=True
+    )
 
     # Generate Sankey data
     sankey_data = generate_sankey_data_by_account(transactions)
@@ -91,7 +95,9 @@ def sankey_by_account(request):
 @require_http_methods(["GET"])
 def sankey_by_currency(request):
     # Get filtered transactions
-    transactions = get_transactions(request)
+    transactions = get_transactions(
+        request, include_silent=True, include_untracked_accounts=True
+    )
 
     # Generate Sankey data
     sankey_data = generate_sankey_data_by_currency(transactions)
@@ -180,6 +186,14 @@ def category_overview(request):
     else:
         show_tags = request.session.get("insights_category_explorer_show_tags", True)
 
+    if "show_entities" in request.GET:
+        show_entities = request.GET["show_entities"] == "on"
+        request.session["insights_category_explorer_show_entities"] = show_entities
+    else:
+        show_entities = request.session.get(
+            "insights_category_explorer_show_entities", False
+        )
+
     if "showing" in request.GET:
         showing = request.GET["showing"]
         request.session["insights_category_explorer_showing"] = showing
@@ -190,7 +204,9 @@ def category_overview(request):
     transactions = get_transactions(request, include_silent=True)
 
     total_table = get_categories_totals(
-        transactions_queryset=transactions, ignore_empty=False
+        transactions_queryset=transactions,
+        ignore_empty=False,
+        show_entities=show_entities,
     )
 
     return render(
@@ -200,6 +216,7 @@ def category_overview(request):
             "total_table": total_table,
             "view_type": view_type,
             "show_tags": show_tags,
+            "show_entities": show_entities,
             "showing": showing,
         },
     )
@@ -239,10 +256,14 @@ def late_transactions(request):
 @login_required
 @require_http_methods(["GET"])
 def emergency_fund(request):
-    transactions_currency_queryset = Transaction.objects.filter(
-        is_paid=True, account__is_archived=False, account__is_asset=False
-    ).order_by(
-        "account__currency__name",
+    transactions_currency_queryset = (
+        Transaction.objects.filter(
+            is_paid=True, account__is_archived=False, account__is_asset=False
+        )
+        .exclude(account__in=request.user.untracked_accounts.all())
+        .order_by(
+            "account__currency__name",
+        )
     )
     currency_net_worth = calculate_currency_totals(
         transactions_queryset=transactions_currency_queryset, ignore_empty=False
@@ -262,6 +283,7 @@ def emergency_fund(request):
             category__mute=False,
             mute=False,
         )
+        .exclude(account__in=request.user.untracked_accounts.all())
         .values("reference_date", "account__currency")
         .annotate(monthly_total=Sum("amount"))
     )
@@ -285,4 +307,72 @@ def emergency_fund(request):
         request,
         "insights/fragments/emergency_fund.html",
         {"data": currency_net_worth},
+    )
+
+
+@only_htmx
+@login_required
+@require_http_methods(["GET"])
+def year_by_year(request):
+    if "group_by" in request.GET:
+        group_by = request.GET["group_by"]
+        request.session["insights_year_by_year_group_by"] = group_by
+    else:
+        group_by = request.session.get("insights_year_by_year_group_by", "categories")
+
+    # Validate group_by value
+    if group_by not in ("categories", "tags", "entities"):
+        group_by = "categories"
+
+    data = get_year_by_year_data(group_by=group_by)
+
+    return render(
+        request,
+        "insights/fragments/year_by_year.html",
+        {
+            "data": data,
+            "group_by": group_by,
+        },
+    )
+
+
+@only_htmx
+@login_required
+@require_http_methods(["GET"])
+def month_by_month(request):
+    # Handle year selection
+    if "year" in request.GET:
+        try:
+            year = int(request.GET["year"])
+            request.session["insights_month_by_month_year"] = year
+        except (ValueError, TypeError):
+            year = request.session.get(
+                "insights_month_by_month_year", timezone.localdate(timezone.now()).year
+            )
+    else:
+        year = request.session.get(
+            "insights_month_by_month_year", timezone.localdate(timezone.now()).year
+        )
+
+    # Handle group_by selection
+    if "group_by" in request.GET:
+        group_by = request.GET["group_by"]
+        request.session["insights_month_by_month_group_by"] = group_by
+    else:
+        group_by = request.session.get("insights_month_by_month_group_by", "categories")
+
+    # Validate group_by value
+    if group_by not in ("categories", "tags", "entities"):
+        group_by = "categories"
+
+    data = get_month_by_month_data(year=year, group_by=group_by)
+
+    return render(
+        request,
+        "insights/fragments/month_by_month.html",
+        {
+            "data": data,
+            "group_by": group_by,
+            "selected_year": year,
+        },
     )

@@ -13,6 +13,7 @@
   <a href="#key-features">Features</a> •
   <a href="#how-to-use">Usage</a> •
   <a href="#how-it-works">How</a> •
+  <a href="#mcp-server">MCP Server</a> •
   <a href="#help-us-translate-wygiwyh">Translate</a> •
   <a href="#caveats-and-warnings">Caveats and Warnings</a> •
   <a href="#built-with">Built with</a>
@@ -126,6 +127,7 @@ To create the first user, open the container's console using Unraid's UI, by cli
 
 | variable                      | type        | default                           | explanation                                                                                                                                                                                                                              |
 |-------------------------------|-------------|-----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| INTERNAL_PORT                 | int         | 8000                              | The port on which the app listens on. Defaults to 8000 if not set.                                                                                                                                                                       |
 | DJANGO_ALLOWED_HOSTS          | string      | localhost 127.0.0.1               | A list of space separated domains and IPs representing the host/domain names that WYGIWYH site can serve. [Click here](https://docs.djangoproject.com/en/5.1/ref/settings/#allowed-hosts) for more details                               |
 | HTTPS_ENABLED                 | true\|false | false                             | Whether to use secure cookies. If this is set to true, the cookie will be marked as “secure”, which means browsers may ensure that the cookie is only sent under an HTTPS connection                                                     |
 | URL                           | string      | http://localhost http://127.0.0.1 | A list of space separated domains and IPs (with the protocol) representing the trusted origins for unsafe requests (e.g. POST). [Click here](https://docs.djangoproject.com/en/5.1/ref/settings/#csrf-trusted-origins ) for more details |
@@ -140,9 +142,13 @@ To create the first user, open the container's console using Unraid's UI, by cli
 | ENABLE_SOFT_DELETE            | true\|false | false                             | Whether to enable transactions soft delete, if enabled, deleted transactions will remain in the database. Useful for imports and avoiding duplicate entries.                                                                             |
 | KEEP_DELETED_TRANSACTIONS_FOR | int         | 365                               | Time in days to keep soft deleted transactions for. If 0, will keep all transactions indefinitely. Only works if ENABLE_SOFT_DELETE is true.                                                                                             |
 | TASK_WORKERS                  | int         | 1                                 | How many workers to have for async tasks. One should be enough for most use cases                                                                                                                                                        |
-| DEMO                          | true\|false         | false                             | If demo mode is enabled.                                                                                                                                                                                                                 |
-| ADMIN_EMAIL                   | string         | None                              | Automatically creates an admin account with this email. Must have `ADMIN_PASSWORD` also set.                                                                                                                                             |
-| ADMIN_PASSWORD                | string         | None                              | Automatically creates an admin account with this password. Must have `ADMIN_EMAIL` also set.                                                                                                                                             |
+| DEMO                          | true\|false | false                             | If demo mode is enabled.                                                                                                                                                                                                                 |
+| ADMIN_EMAIL                   | string      | None                              | Automatically creates an admin account with this email. Must have `ADMIN_PASSWORD` also set.                                                                                                                                             |
+| ADMIN_PASSWORD                | string      | None                              | Automatically creates an admin account with this password. Must have `ADMIN_EMAIL` also set.                                                                                                                                             |
+| CHECK_FOR_UPDATES             | true\|false | true                              | Check and notify users about new versions. The check is done by doing a single query to Github's API every 12 hours.                                                                                                                     |
+| DJANGO_VITE_DEV_MODE          | true\|false | false                             | Enables Vite dev server mode for frontend development. When true, assets are served from Vite's dev server instead of the build manifest. For development only!                                                                          |
+| DJANGO_VITE_DEV_SERVER_PORT   | int         | 5173                              | The port where Vite's dev server is running. Only used when DJANGO_VITE_DEV_MODE is true. For development only!                                                                                                                          |
+| DJANGO_VITE_DEV_SERVER_HOST   | string      | localhost                         | The host where Vite's dev server is running. Only used when DJANGO_VITE_DEV_MODE is true. For development only!                                                                                                                          |
 
 ## OIDC Configuration
 
@@ -150,6 +156,13 @@ WYGIWYH supports login via OpenID Connect (OIDC) through `django-allauth`. This 
 
 > [!NOTE]
 > Currently only OpenID Connect is supported as a provider, open an issue if you need something else.
+
+> [!Caution]
+> WYGIWYH automatically connects OIDC accounts to existing local accounts with matching email addresses.
+> This means if a user already exists with email `user@example.com` and someone logs in via OIDC with the same email, the OIDC account will be automatically linked to the existing account without requiring user confirmation.
+> This is only recommended for trusted OIDC providers that verify email addresses and where you control who can create accounts.
+
+### Configuration
 
 To configure OIDC, you need to set the following environment variables:
 
@@ -213,6 +226,10 @@ Check out our [Wiki](https://github.com/eitchtee/WYGIWYH/wiki) for more informat
 
 > [!NOTE]
 > Login with your github account
+
+# MCP Server
+
+[IZIme07](https://github.com/IZIme07) has kindly created an MCP Server for WYGIWYH that you can self-host. [Check it out at MCP-WYGIWYH](https://github.com/ReNewator/MCP-WYGIWYH)!
 
 # Caveats and Warnings
 

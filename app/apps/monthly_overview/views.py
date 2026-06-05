@@ -2,7 +2,8 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import (
     Q,
 )
-from django.http import HttpResponse
+from django.http import HttpResponse, Http404
+
 from django.shortcuts import render, redirect
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
@@ -36,8 +37,6 @@ def monthly_overview(request, month: int, year: int):
     summary_tab = request.session.get("monthly_summary_tab", "summary")
 
     if month < 1 or month > 12:
-        from django.http import Http404
-
         raise Http404("Month is out of range")
 
     next_month = 1 if month == 12 else month + 1
@@ -76,6 +75,8 @@ def transactions_list(request, month: int, year: int):
         if order != request.session.get("monthly_transactions_order", "default"):
             request.session["monthly_transactions_order"] = order
 
+    today = timezone.localdate(timezone.now())
+
     f = TransactionsFilter(request.GET)
     transactions_filtered = f.qs.filter(
         reference_date__year=year,
@@ -93,12 +94,28 @@ def transactions_list(request, month: int, year: int):
         "dca_income_entries",
     )
 
+    # Late transactions: date < today and is_paid = False (only shown for default ordering)
+    late_transactions = None
+    if order == "default":
+        late_transactions = transactions_filtered.filter(
+            date__lt=today,
+            is_paid=False,
+        ).order_by("date", "id")
+        # Exclude late transactions from the main list
+        transactions_filtered = transactions_filtered.exclude(
+            date__lt=today,
+            is_paid=False,
+        )
+
     transactions_filtered = default_order(transactions_filtered, order=order)
 
     return render(
         request,
         "monthly_overview/fragments/list.html",
-        context={"transactions": transactions_filtered},
+        context={
+            "transactions": transactions_filtered,
+            "late_transactions": late_transactions,
+        },
     )
 
 
@@ -108,10 +125,47 @@ def transactions_list(request, month: int, year: int):
 def monthly_summary(request, month: int, year: int):
     # Base queryset with all required filters
     base_queryset = Transaction.objects.filter(
-        reference_date__year=year, reference_date__month=month, account__is_asset=False
-    ).exclude(Q(Q(category__mute=True) & ~Q(category=None)) | Q(mute=True))
+        reference_date__year=year,
+        reference_date__month=month,
+    )
 
-    data = calculate_currency_totals(base_queryset, ignore_empty=True)
+    # Apply filters and check if any are active
+    f = TransactionsFilter(request.GET, queryset=base_queryset)
+
+    # Check if any filter has a non-default value
+    # Default values are: type=['IN', 'EX'], is_paid=['1', '0'], everything else empty
+    has_active_filter = False
+    if f.form.is_valid():
+        for name, value in f.form.cleaned_data.items():
+            # Skip fields with default/empty values
+            if not value:
+                continue
+            # Skip type if it has both default values
+            if name == "type" and set(value) == {"IN", "EX"}:
+                continue
+            # Skip is_paid if it has both default values (values are strings)
+            if name == "is_paid" and set(value) == {"1", "0"}:
+                continue
+            # Skip mute_status if it has both default values
+            if name == "mute_status" and set(value) == {"active", "muted"}:
+                continue
+            # If we get here, there's an active filter
+            has_active_filter = True
+            break
+
+    if has_active_filter:
+        queryset = f.qs
+    else:
+        queryset = (
+            base_queryset.exclude(
+                Q(Q(category__mute=True) & ~Q(category=None)) | Q(mute=True)
+            )
+            .exclude(account__in=request.user.untracked_accounts.all())
+            .exclude(account__is_asset=True)
+        )
+
+    data = calculate_currency_totals(queryset, ignore_empty=True)
+
     percentages = calculate_percentage_distribution(data)
 
     context = {
@@ -126,6 +180,7 @@ def monthly_summary(request, month: int, year: int):
             currency_totals=data, month=month, year=year
         ),
         "percentages": percentages,
+        "has_active_filter": has_active_filter,
     }
 
     return render(
@@ -143,9 +198,38 @@ def monthly_account_summary(request, month: int, year: int):
     base_queryset = Transaction.objects.filter(
         reference_date__year=year,
         reference_date__month=month,
-    ).exclude(Q(Q(category__mute=True) & ~Q(category=None)) | Q(mute=True))
+    )
 
-    account_data = calculate_account_totals(transactions_queryset=base_queryset.all())
+    # Apply filters and check if any are active
+    f = TransactionsFilter(request.GET, queryset=base_queryset)
+
+    # Check if any filter has a non-default value
+    has_active_filter = False
+    if f.form.is_valid():
+        for name, value in f.form.cleaned_data.items():
+            if not value:
+                continue
+            if name == "type" and set(value) == {"IN", "EX"}:
+                continue
+            if name == "is_paid" and set(value) == {"1", "0"}:
+                continue
+            if name == "mute_status" and set(value) == {"active", "muted"}:
+                continue
+            has_active_filter = True
+            break
+
+    if has_active_filter:
+        queryset = f.qs
+    else:
+        queryset = (
+            base_queryset.exclude(
+                Q(Q(category__mute=True) & ~Q(category=None)) | Q(mute=True)
+            )
+            .exclude(account__in=request.user.untracked_accounts.all())
+            .exclude(account__is_asset=True)
+        )
+
+    account_data = calculate_account_totals(transactions_queryset=queryset.all())
     account_percentages = calculate_percentage_distribution(account_data)
 
     context = {
@@ -168,9 +252,38 @@ def monthly_currency_summary(request, month: int, year: int):
     base_queryset = Transaction.objects.filter(
         reference_date__year=year,
         reference_date__month=month,
-    ).exclude(Q(Q(category__mute=True) & ~Q(category=None)) | Q(mute=True))
+    )
 
-    currency_data = calculate_currency_totals(base_queryset.all(), ignore_empty=True)
+    # Apply filters and check if any are active
+    f = TransactionsFilter(request.GET, queryset=base_queryset)
+
+    # Check if any filter has a non-default value
+    has_active_filter = False
+    if f.form.is_valid():
+        for name, value in f.form.cleaned_data.items():
+            if not value:
+                continue
+            if name == "type" and set(value) == {"IN", "EX"}:
+                continue
+            if name == "is_paid" and set(value) == {"1", "0"}:
+                continue
+            if name == "mute_status" and set(value) == {"active", "muted"}:
+                continue
+            has_active_filter = True
+            break
+
+    if has_active_filter:
+        queryset = f.qs
+    else:
+        queryset = (
+            base_queryset.exclude(
+                Q(Q(category__mute=True) & ~Q(category=None)) | Q(mute=True)
+            )
+            .exclude(account__in=request.user.untracked_accounts.all())
+            .exclude(account__is_asset=True)
+        )
+
+    currency_data = calculate_currency_totals(queryset.all(), ignore_empty=True)
     currency_percentages = calculate_percentage_distribution(currency_data)
 
     context = {

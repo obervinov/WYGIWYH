@@ -2,9 +2,8 @@ services:
   web:
     image: eitchtee/wygiwyh:latest
     container_name: ${SERVER_NAME}
-    command: /start-single
     ports:
-      - "${OUTBOUND_PORT}:8000"
+      - "${OUTBOUND_PORT:-8000}:${INTERNAL_PORT:-8000}"
     env_file:
       - .env
     depends_on:
@@ -12,7 +11,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:15
+    image: postgres:15-bookworm
     container_name: ${DB_NAME}
     restart: unless-stopped
     volumes:

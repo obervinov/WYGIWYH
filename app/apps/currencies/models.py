@@ -32,6 +32,11 @@ class Currency(models.Model):
         help_text=_("Default currency for exchange calculations"),
     )
 
+    is_archived = models.BooleanField(
+        default=False,
+        verbose_name=_("Archived"),
+    )
+
     def __str__(self):
         return self.name
 
@@ -70,6 +75,8 @@ class ExchangeRate(models.Model):
     )
     date = models.DateTimeField(verbose_name=_("Date and Time"))
 
+    automatic = models.BooleanField(verbose_name=_("Auto"), default=False)
+
     class Meta:
         verbose_name = _("Exchange Rate")
         verbose_name_plural = _("Exchange Rates")
@@ -92,11 +99,12 @@ class ExchangeRateService(models.Model):
     """Configuration for exchange rate services"""
 
     class ServiceType(models.TextChoices):
-        SYNTH_FINANCE = "synth_finance", "Synth Finance"
-        SYNTH_FINANCE_STOCK = "synth_finance_stock", "Synth Finance Stock"
         COINGECKO_FREE = "coingecko_free", "CoinGecko (Demo/Free)"
         COINGECKO_PRO = "coingecko_pro", "CoinGecko (Pro)"
         TRANSITIVE = "transitive", "Transitive (Calculated from Existing Rates)"
+        FRANKFURTER = "frankfurter", "Frankfurter"
+        TWELVEDATA = "twelvedata", "TwelveData"
+        TWELVEDATA_MARKETS = "twelvedatamarkets", "TwelveData Markets"
 
     class IntervalType(models.TextChoices):
         ON = "on", _("On")
@@ -128,6 +136,8 @@ class ExchangeRateService(models.Model):
         null=True, blank=True, verbose_name=_("Last Successful Fetch")
     )
 
+    failure_count = models.PositiveIntegerField(default=0)
+
     target_currencies = models.ManyToManyField(
         Currency,
         verbose_name=_("Target Currencies"),
@@ -146,6 +156,14 @@ class ExchangeRateService(models.Model):
         ),
         related_name="exchange_services",
         blank=True,
+    )
+
+    singleton = models.BooleanField(
+        verbose_name=_("Single exchange rate"),
+        default=False,
+        help_text=_(
+            "Create one exchange rate and keep updating it. Avoids database clutter."
+        ),
     )
 
     class Meta:
@@ -221,7 +239,7 @@ class ExchangeRateService(models.Model):
                     hours = self._parse_hour_ranges(self.fetch_interval)
                     # Store in normalized format (optional)
                     self.fetch_interval = ",".join(str(h) for h in sorted(hours))
-                except ValueError as e:
+                except ValueError:
                     raise ValidationError(
                         {
                             "fetch_interval": _(
@@ -232,7 +250,7 @@ class ExchangeRateService(models.Model):
                     )
         except ValidationError:
             raise
-        except Exception as e:
+        except Exception:
             raise ValidationError(
                 {
                     "fetch_interval": _(

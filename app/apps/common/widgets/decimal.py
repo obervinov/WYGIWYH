@@ -35,9 +35,8 @@ class ArbitraryDecimalDisplayNumberInput(forms.TextInput):
         self.attrs.update(
             {
                 "x-data": "",
-                "x-mask:dynamic": f"$money($input, '{get_format('DECIMAL_SEPARATOR')}', "
-                f"'{get_format('THOUSAND_SEPARATOR')}', '30')",
-                "x-on:keyup": "$el.dispatchEvent(new Event('input'))",
+                "x-mask:dynamic": f"$money($input, '{get_format('DECIMAL_SEPARATOR')}', '{get_format('THOUSAND_SEPARATOR')}', '30')",
+                "x-on:keyup": "if (!['Control', 'Shift', 'Alt', 'Meta'].includes($event.key) && !(($event.ctrlKey || $event.metaKey) && $event.key.toLowerCase() === 'a')) $el.dispatchEvent(new Event('input'))",
             }
         )
 

@@ -56,11 +56,28 @@
   animation: slide-in-left 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
 }
 
+@keyframes slide-out-left {
+  0% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+}
+
+.slide-out-left {
+  animation: slide-out-left 0.15s cubic-bezier(0.55, 0.085, 0.68, 0.53) both;
+}
+
 // HTMX Loading
 @keyframes spin {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
@@ -70,6 +87,7 @@
   0% {
     opacity: 0;
   }
+
   100% {
     opacity: 1;
   }
@@ -101,8 +119,8 @@
     left: 50%;
     width: 40px;
     height: 40px;
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid $primary;
+    border: 4px solid var(--color-primary);
+    border-top: 4px solid var(--color-base-300);
     border-radius: 50%;
     animation: spin 1s linear infinite, fade-in 0.1s ease-in forwards;
     animation-delay: 200ms;
@@ -133,6 +151,7 @@
     transform-origin: top;
     opacity: 1;
   }
+
   100% {
     transform: rotateX(-100deg);
     transform-origin: top;
@@ -157,6 +176,7 @@
     transform: scale(0);
     opacity: 1;
   }
+
   100% {
     transform: scale(1);
     opacity: 1;
@@ -184,6 +204,7 @@
     transform: scale(1);
     opacity: 1;
   }
+
   100% {
     transform: scale(0);
     opacity: 1;
@@ -195,9 +216,12 @@
 }
 
 @keyframes flash {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.3;
   }
@@ -209,11 +233,11 @@
 
 
 .slide-in-bottom {
-	animation: slide-in-bottom 0.3s cubic-bezier(0.250, 0.460, 0.450, 0.940) both;
+  animation: slide-in-bottom 0.3s cubic-bezier(0.250, 0.460, 0.450, 0.940) both;
 }
 
 .slide-in-bottom-reverse {
-	animation: slide-in-bottom 0.3s cubic-bezier(0.250, 0.460, 0.450, 0.940) reverse both;
+  animation: slide-in-bottom 0.3s cubic-bezier(0.250, 0.460, 0.450, 0.940) reverse both;
 }
 
 /* ----------------------------------------------
@@ -233,8 +257,47 @@
     transform: translateY(1000px);
     opacity: 0;
   }
+
   100% {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+/**
+ * ----------------------------------------
+ * animation slide-in-bottom-short
+ * A variant with smaller translateY for elements at bottom of viewport
+ * ----------------------------------------
+ */
+@keyframes slide-in-bottom-short {
+  0% {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.slide-in-bottom-short {
+  animation: slide-in-bottom-short 0.3s cubic-bezier(0.250, 0.460, 0.450, 0.940) both;
+}
+
+.slide-in-bottom-short-reverse {
+  animation: slide-in-bottom-short 0.3s cubic-bezier(0.250, 0.460, 0.450, 0.940) reverse both;
+}
+
+@keyframes disable-pointer-events {
+
+  0%,
+  99% {
+    pointer-events: none;
+  }
+
+  100% {
+    pointer-events: auto;
   }
 }
