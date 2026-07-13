@@ -937,8 +937,16 @@ class RecurringTransaction(models.Model):
             notes=self.notes if self.add_notes_to_transaction else "",
             owner=self.account.owner,
         )
-        created_transaction.tags.set(self.tags.all())
-        created_transaction.entities.set(self.entities.all())
+        # Copy tags/entities through the unfiltered manager. This method also
+        # runs from the userless nightly scheduler (generate_upcoming_transactions),
+        # where self.tags/self.entities go through the owner-scoped default manager
+        # and resolve to an empty set with no current user, silently dropping them.
+        created_transaction.tags.set(
+            TransactionTag.all_objects.filter(recurringtransaction=self)
+        )
+        created_transaction.entities.set(
+            TransactionEntity.all_objects.filter(recurringtransaction=self)
+        )
 
     def get_recurrence_delta(self):
         if self.recurrence_type == self.RecurrenceType.DAY:
@@ -1030,9 +1038,14 @@ class RecurringTransaction(models.Model):
                 self.notes if self.add_notes_to_transaction else ""
             )
 
-            # Update many-to-many relationships
-            existing_transaction.tags.set(self.tags.all())
-            existing_transaction.entities.set(self.entities.all())
+            # Update many-to-many relationships via the unfiltered manager so
+            # this works from a userless context too (see create_transaction).
+            existing_transaction.tags.set(
+                TransactionTag.all_objects.filter(recurringtransaction=self)
+            )
+            existing_transaction.entities.set(
+                TransactionEntity.all_objects.filter(recurringtransaction=self)
+            )
 
             # Save updated transaction
             existing_transaction.save()
