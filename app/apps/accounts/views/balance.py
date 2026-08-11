@@ -13,6 +13,7 @@ from apps.accounts.forms import AccountBalanceFormSet
 from apps.accounts.models import Account, Transaction
 from apps.accounts.services import get_account_balance
 from apps.common.decorators.htmx import only_htmx
+from apps.transactions.models import transaction_created
 
 
 @only_htmx
@@ -36,6 +37,7 @@ def account_reconciliation(request):
     if request.method == "POST":
         formset = AccountBalanceFormSet(request.POST, initial=initial_data)
         if formset.is_valid():
+            created_transactions = []
             with transaction.atomic():
                 for form in formset:
                     if form.is_valid():
@@ -70,6 +72,13 @@ def account_reconciliation(request):
                             )
 
                             new_transaction.tags.set(tags)
+                            created_transactions.append(new_transaction)
+
+            # Emitted after the atomic block so rules never run against a
+            # rolled-back transaction, and after tags.set() so a rule's
+            # trigger can read tag_names.
+            for new_transaction in created_transactions:
+                transaction_created.send(sender=new_transaction)
 
             messages.success(
                 request, _("Account balances have been reconciled successfully")
